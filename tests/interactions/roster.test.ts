@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { testDb, resetDb } from '../helpers/db.js'
 import { makeGuild, makeDraft, makeSlot } from '../helpers/factories.js'
-import { addSlot, loadEventView } from '../../src/domain/events.js'
+import { addSlot, loadEventView, publishEvent } from '../../src/domain/events.js'
 import { renderRosterBuilder, registerRosterHandlers } from '../../src/interactions/roster.js'
 import { dispatchInteraction, resetHandlers, type BotDeps } from '../../src/bot/router.js'
 import { buildCustomId } from '../../src/broadcast/render.js'
@@ -142,5 +142,63 @@ describe('contrôle de propriété du brouillon', () => {
     expect(interaction.update).toHaveBeenCalled()
     const event = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
     expect(event.status).toBe('PUBLISHED')
+  })
+})
+
+describe('I4 — garde de statut DRAFT sur les quatre handlers du roster', () => {
+  beforeEach(() => {
+    resetHandlers()
+    registerRosterHandlers()
+  })
+
+  async function publishedDraft() {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id, 'rl-1')
+    const slot = await makeSlot(testDb, draft.id)
+    await publishEvent(testDb, draft.id)
+    return { draft, slot }
+  }
+
+  it('roster:class refusé sur une annonce déjà PUBLISHED', async () => {
+    const { draft } = await publishedDraft()
+    const interaction = fakeInteraction(buildCustomId('roster', 'class', draft.id), 'rl-1', ['MAGE'])
+
+    await dispatchInteraction(interaction as never, deps() as never)
+
+    expect(interaction.update).not.toHaveBeenCalled()
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('no longer be edited') }))
+  })
+
+  it('roster:spec refusé sur une annonce déjà PUBLISHED : aucune place ajoutée', async () => {
+    const { draft } = await publishedDraft()
+    const interaction = fakeInteraction(buildCustomId('roster', 'spec', `${draft.id}|MAGE`), 'rl-1', ['ARCANE'])
+    const before = await testDb.slot.count({ where: { eventId: draft.id } })
+
+    await dispatchInteraction(interaction as never, deps() as never)
+
+    expect(interaction.update).not.toHaveBeenCalled()
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('no longer be edited') }))
+    expect(await testDb.slot.count({ where: { eventId: draft.id } })).toBe(before)
+  })
+
+  it('roster:remove refusé sur une annonce déjà PUBLISHED : la place reste en base', async () => {
+    const { draft, slot } = await publishedDraft()
+    const interaction = fakeInteraction(buildCustomId('roster', 'remove', draft.id), 'rl-1', [slot.id])
+
+    await dispatchInteraction(interaction as never, deps() as never)
+
+    expect(interaction.update).not.toHaveBeenCalled()
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('no longer be edited') }))
+    expect(await testDb.slot.findUnique({ where: { id: slot.id } })).not.toBeNull()
+  })
+
+  it('roster:publish refusé sur une annonce déjà PUBLISHED (double-clic)', async () => {
+    const { draft } = await publishedDraft()
+    const interaction = fakeInteraction(buildCustomId('roster', 'publish', draft.id), 'rl-1')
+
+    await dispatchInteraction(interaction as never, deps() as never)
+
+    expect(interaction.update).not.toHaveBeenCalled()
+    expect(interaction.reply).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('no longer be edited') }))
   })
 })

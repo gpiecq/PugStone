@@ -41,3 +41,6 @@ export class EventClosed extends DomainError {
 export class SlotNotFound extends DomainError {
   constructor() { super('place introuvable', 'This spot no longer exists.') }
 }
+export class RosterLocked extends DomainError {
+  constructor() { super('roster verrouillé après publication', 'This roster can no longer be edited once the listing has been published.') }
+}

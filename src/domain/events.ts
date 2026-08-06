@@ -8,7 +8,7 @@ import type { Application, Difficulty, Event, Slot } from '@prisma/client'
 import type { Db } from '../db/client.js'
 import { findSpec } from '../config/wow.js'
 import { listActiveGuilds } from './network.js'
-import { EmptyRoster, NoActivePartners, NotAuthorized, DomainError } from './errors.js'
+import { EmptyRoster, EventClosed, NoActivePartners, NotAuthorized, RaidTimeInvalid, SlotNotFound, DomainError } from './errors.js'
 
 export interface EventView {
   event: Event
@@ -39,8 +39,16 @@ export async function addSlot(db: Db, eventId: string, spec: { className: string
   })
 }
 
-export async function removeSlot(db: Db, slotId: string): Promise<void> {
-  await db.slot.delete({ where: { id: slotId } })
+/**
+ * Contraint la suppression à l'annonce passée : sans ce filtre, `slotId` seul
+ * suffisait à supprimer la place d'une AUTRE annonce que celle validée par
+ * `requireAuthor` côté handler (revue finale, constat I4). `deleteMany` rend
+ * ce contrôle atomique — pas de fenêtre entre une lecture qui vérifierait
+ * `eventId` et une suppression séparée.
+ */
+export async function removeSlot(db: Db, eventId: string, slotId: string): Promise<void> {
+  const { count } = await db.slot.deleteMany({ where: { id: slotId, eventId } })
+  if (count === 0) throw new SlotNotFound()
 }
 
 export async function setContact(db: Db, eventId: string, contact: string): Promise<void> {
@@ -65,6 +73,17 @@ export async function bumpVersions(tx: Db, eventId: string, options: { public: b
 export async function publishEvent(db: Db, eventId: string): Promise<{ targets: number }> {
   return db.$transaction(async (tx) => {
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { originGuild: true } })
+    // Un double-clic sur [Publish LFG] republiait sinon une annonce déjà
+    // PUBLISHED : le createMany suivant heurtait la contrainte unique
+    // d'EventMessage et remontait une P2002 brute (revue finale, constat I9).
+    if (event.status !== 'DRAFT') throw new EventClosed()
+    // Un brouillon créé pour une heure désormais passée (temps écoulé entre
+    // création et publication) partirait en fan-out sur tout le réseau pour
+    // expirer dans la minute — N publications et N éditions inutiles (revue
+    // finale, constat I8).
+    if (event.scheduledAt.getTime() <= Date.now()) {
+      throw new RaidTimeInvalid("This listing's raid time has already passed. Cancel this draft and create a new one.")
+    }
     const slots = await tx.slot.count({ where: { eventId } })
     if (slots === 0) throw new EmptyRoster()
 

@@ -10,7 +10,7 @@ import { WOW_CLASSES, findClass, findSpec } from '../config/wow.js'
 import { classEmoji, type EmojiMap } from '../config/emojis.js'
 import { registerHandler, type HandlerContext } from '../bot/router.js'
 import { addSlot, loadEventView, publishEvent, removeSlot } from '../domain/events.js'
-import { NotAuthorized } from '../domain/errors.js'
+import { NotAuthorized, RosterLocked } from '../domain/errors.js'
 
 /**
  * Le brouillon vit en base, pas en mémoire : le constructeur se ré-affiche à
@@ -85,18 +85,28 @@ async function sendUpdate(ctx: HandlerContext, payload: unknown): Promise<void> 
 }
 
 /**
- * Charge le brouillon et vérifie que l'acteur de l'interaction est bien son
- * auteur. Le seul rempart qu'offrirait sinon un `custom_id` (message
- * éphémère, cuid imprévisible) n'est pas un contrôle d'accès : un tiers qui
- * rejoue l'identifiant pourrait sinon modifier ou publier le brouillon d'un
- * autre recruteur. Appelé avant toute mutation, dans les quatre handlers —
- * cohérent avec `cancelEvent`/`acceptApplication`, qui lèvent la même erreur
- * pour le même motif ailleurs dans le domaine.
+ * Charge le brouillon, vérifie que l'acteur de l'interaction est bien son
+ * auteur, et que l'annonce est encore en DRAFT. Le seul rempart qu'offrirait
+ * sinon un `custom_id` (message éphémère, cuid imprévisible) n'est pas un
+ * contrôle d'accès : un tiers qui rejoue l'identifiant pourrait sinon
+ * modifier ou publier le brouillon d'un autre recruteur. Appelé avant toute
+ * mutation, dans les quatre handlers — cohérent avec
+ * `cancelEvent`/`acceptApplication`, qui lèvent la même erreur pour le même
+ * motif ailleurs dans le domaine.
+ *
+ * La garde DRAFT (revue finale, constat I4) empêche ces handlers de toucher
+ * une annonce déjà publiée : sans elle, `addSlot`/`removeSlot` pourraient
+ * faire diverger silencieusement ce que le réseau affiche (aucun des deux
+ * n'appelle `bumpVersions`), et une suppression totale des places laisserait
+ * le dashboard sans aucune section à afficher.
  */
 async function requireAuthor(ctx: HandlerContext, eventId: string): Promise<EventView> {
   const view = await loadEventView(ctx.deps.db, eventId)
   if (view.event.authorId !== ctx.interaction.user.id) {
     throw new NotAuthorized('managing this roster')
+  }
+  if (view.event.status !== 'DRAFT') {
+    throw new RosterLocked()
   }
   return view
 }
@@ -129,19 +139,25 @@ export function registerRosterHandlers(): void {
   registerHandler('roster', 'remove', async (ctx) => {
     await requireAuthor(ctx, ctx.id)
     const slotId = (ctx.interaction as unknown as { values: string[] }).values[0]!
-    await removeSlot(ctx.deps.db, slotId)
+    await removeSlot(ctx.deps.db, ctx.id, slotId)
     await refresh(ctx, ctx.id, null)
   })
 
   registerHandler('roster', 'publish', async (ctx) => {
     await requireAuthor(ctx, ctx.id)
-    // `publishEvent` peut lever EmptyRoster ou NoActivePartners malgré le
-    // bouton désactivé côté client (état re-synchronisé entre-temps, race
-    // avec une suppression concurrente) : dispatchInteraction transforme ces
+    // `publishEvent` peut lever EmptyRoster, NoActivePartners ou
+    // RaidTimeInvalid malgré le bouton désactivé côté client (état
+    // re-synchronisé entre-temps, race avec une suppression concurrente ou
+    // avec l'écoulement du temps) : dispatchInteraction transforme ces
     // erreurs en message lisible, aucun try/catch local nécessaire.
     const { targets } = await publishEvent(ctx.deps.db, ctx.id)
     await sendUpdate(ctx, {
-      content: `Listing published to ${targets} server(s). Your dashboard is on its way by DM.`,
+      // Le worker d'émission tente d'abord un DM puis, si les DM du RL sont
+      // fermés, se rabat sur un thread privé dans le salon LFG — sans retour
+      // possible vers cette interaction déjà close une fois le choix fait
+      // (revue finale, constat I7) : le message doit donc couvrir les deux
+      // issues plutôt que d'annoncer un DM comme s'il était garanti.
+      content: `Listing published to ${targets} server(s). Your dashboard will arrive by DM, or in a private thread in the LFG channel if your DMs are closed.`,
       embeds: [], components: [],
     })
   })

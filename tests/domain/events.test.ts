@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { testDb, resetDb } from '../helpers/db.js'
 import { makeGuild, makeDraft } from '../helpers/factories.js'
 import { createDraft, addSlot, removeSlot, setContact, publishEvent, cancelEvent, loadEventView } from '../../src/domain/events.js'
-import { EmptyRoster, NoActivePartners, NotAuthorized } from '../../src/domain/errors.js'
+import { EmptyRoster, EventClosed, NoActivePartners, NotAuthorized, RaidTimeInvalid, SlotNotFound } from '../../src/domain/errors.js'
 
 beforeEach(resetDb)
 afterAll(() => testDb.$disconnect())
@@ -70,8 +70,18 @@ describe('construction du roster', () => {
     const guild = await makeGuild(testDb)
     const draft = await makeDraft(testDb, guild.id)
     const slot = await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
-    await removeSlot(testDb, slot.id)
+    await removeSlot(testDb, draft.id, slot.id)
     expect(await testDb.slot.count({ where: { eventId: draft.id } })).toBe(0)
+  })
+
+  it('I4 — refuse de retirer une place appartenant à une autre annonce, sans rien supprimer', async () => {
+    const guild = await makeGuild(testDb)
+    const draftA = await makeDraft(testDb, guild.id)
+    const draftB = await makeDraft(testDb, guild.id)
+    const slot = await addSlot(testDb, draftA.id, { className: 'MAGE', specName: 'ARCANE' })
+
+    await expect(removeSlot(testDb, draftB.id, slot.id)).rejects.toBeInstanceOf(SlotNotFound)
+    expect(await testDb.slot.count({ where: { eventId: draftA.id } })).toBe(1)
   })
 })
 
@@ -108,6 +118,29 @@ describe('publication', () => {
     const draft = await makeDraft(testDb, guild.id)
     await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
     await expect(publishEvent(testDb, draft.id)).rejects.toBeInstanceOf(NoActivePartners)
+  })
+
+  it('I9 — refuse une seconde publication d\'une annonce déjà PUBLISHED', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+    await publishEvent(testDb, draft.id)
+
+    await expect(publishEvent(testDb, draft.id)).rejects.toBeInstanceOf(EventClosed)
+    const event = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(event.status).toBe('PUBLISHED')
+  })
+
+  it('I8 — refuse de publier un brouillon dont l\'heure de raid est déjà passée', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await testDb.event.update({ where: { id: draft.id }, data: { scheduledAt: new Date('2020-01-01T00:00:00Z') } })
+    await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+
+    await expect(publishEvent(testDb, draft.id)).rejects.toBeInstanceOf(RaidTimeInvalid)
+    const event = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(event.status).toBe('DRAFT')
+    expect(await testDb.eventMessage.count()).toBe(0)
   })
 })
 
