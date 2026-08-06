@@ -3,6 +3,7 @@ import type { Db } from '../db/client.js'
 import type { BotDeps } from '../bot/router.js'
 import { assertOwner } from '../bot/permissions.js'
 import { createInviteCode, revokeInviteCode } from '../domain/network.js'
+import { DomainError } from '../domain/errors.js'
 
 export async function buildNetworkStatus(db: Db): Promise<string> {
   const [active, attention, blocked] = await Promise.all([
@@ -29,24 +30,37 @@ export const networkCommand = {
     .addSubcommand((s) => s.setName('status').setDescription('Show network health')) as SlashCommandBuilder,
 
   async execute(interaction: ChatInputCommandInteraction, deps: BotDeps): Promise<void> {
-    assertOwner(interaction.user.id, deps.ownerId)
+    // deferReply d'abord : assertOwner peut lever avant que l'interaction soit
+    // accusée réception, sans quoi Discord affiche « interaction failed » au
+    // lieu du message d'erreur prévu pour le chemin négatif principal de cette
+    // commande (un non-owner qui essaie /network).
     await interaction.deferReply({ ephemeral: true })
 
-    switch (interaction.options.getSubcommand()) {
-      case 'invite': {
-        const code = await createInviteCode(deps.db, interaction.user.id)
-        await interaction.editReply(
-          `Invite code: \`${code}\`\nThe partner admin runs \`/set-lfg-channel code:${code} channel:#lfg roles:@RaidLead timezone:Europe/Paris\`.`,
-        )
+    try {
+      assertOwner(interaction.user.id, deps.ownerId)
+
+      switch (interaction.options.getSubcommand()) {
+        case 'invite': {
+          const code = await createInviteCode(deps.db, interaction.user.id)
+          await interaction.editReply(
+            `Invite code: \`${code}\`\nThe partner admin runs \`/set-lfg-channel code:${code} channel:#lfg roles:@RaidLead timezone:Europe/Paris\`.`,
+          )
+          return
+        }
+        case 'revoke': {
+          await revokeInviteCode(deps.db, interaction.options.getString('code', true))
+          await interaction.editReply('Code revoked if it was still unused.')
+          return
+        }
+        default:
+          await interaction.editReply(await buildNetworkStatus(deps.db))
+      }
+    } catch (error) {
+      if (error instanceof DomainError) {
+        await interaction.editReply(error.userMessage)
         return
       }
-      case 'revoke': {
-        await revokeInviteCode(deps.db, interaction.options.getString('code', true))
-        await interaction.editReply('Code revoked if it was still unused.')
-        return
-      }
-      default:
-        await interaction.editReply(await buildNetworkStatus(deps.db))
+      throw error
     }
   },
 }

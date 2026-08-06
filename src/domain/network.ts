@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { Guild } from '@prisma/client'
 import type { Db } from '../db/client.js'
-import { InviteCodeUnusable } from './errors.js'
+import { GuildNotOnboarded, InviteCodeUnusable } from './errors.js'
 
 /** Base 32 sans caractères ambigus : un code se dicte à l'oral sans confusion. */
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
@@ -67,6 +67,11 @@ export interface UpdateGuildParams {
 
 export async function updateGuildConfig(db: Db, params: UpdateGuildParams): Promise<Guild> {
   const { discordGuildId, ...changes } = params
+  // Un serveur qui n'a jamais consommé de code d'invitation n'a pas de ligne
+  // Guild : sans ce contrôle, Prisma lèverait une P2025 brute jusqu'à
+  // l'utilisateur final plutôt que le message métier attendu.
+  const existing = await db.guild.findUnique({ where: { discordGuildId } })
+  if (!existing) throw new GuildNotOnboarded()
   return db.guild.update({
     where: { discordGuildId },
     // Reconfigurer un serveur le remet dans le circuit : c'est la façon dont un

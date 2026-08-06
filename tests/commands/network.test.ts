@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest'
 import { testDb, resetDb } from '../helpers/db.js'
 import { assertOwner, isRecruiter } from '../../src/bot/permissions.js'
 import { NotAuthorized } from '../../src/domain/errors.js'
 import { createInviteCode, redeemInviteCode, listActiveGuilds, markGuildNeedsAttention } from '../../src/domain/network.js'
-import { buildNetworkStatus } from '../../src/commands/network.js'
+import { buildNetworkStatus, networkCommand } from '../../src/commands/network.js'
 
 beforeEach(resetDb)
 afterAll(() => testDb.$disconnect())
@@ -38,5 +38,27 @@ describe('/network status', () => {
     expect(status).toContain('gA')
     expect(status).toContain('missing permissions')
     expect(await listActiveGuilds(testDb)).toHaveLength(1)
+  })
+})
+
+describe('/network exécutée par un non-owner', () => {
+  it('renvoie le message utilisateur de NotAuthorized plutôt qu\'une exception brute', async () => {
+    const editReply = vi.fn().mockResolvedValue(undefined)
+    const interaction = {
+      user: { id: 'not-owner' },
+      deferReply: vi.fn().mockResolvedValue(undefined),
+      editReply,
+      options: { getSubcommand: () => 'status' },
+    }
+
+    // L'interaction doit rester accusée réception (deferReply) même quand
+    // l'autorisation échoue, et la réponse doit porter le userMessage de
+    // NotAuthorized — pas laisser l'exception remonter sans réponse.
+    await expect(
+      networkCommand.execute(interaction as never, { db: testDb, ownerId: 'owner' } as never),
+    ).resolves.toBeUndefined()
+
+    expect(interaction.deferReply).toHaveBeenCalledWith({ ephemeral: true })
+    expect(editReply).toHaveBeenCalledWith(expect.stringContaining('not allowed'))
   })
 })

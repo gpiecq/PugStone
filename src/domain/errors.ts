@@ -15,6 +15,14 @@ export class InviteCodeUnusable extends DomainError {
 export class NotAuthorized extends DomainError {
   constructor(what = 'this action') { super('action non autorisée', `You are not allowed to perform ${what}.`) }
 }
+export class GuildNotOnboarded extends DomainError {
+  constructor() {
+    super(
+      'serveur non inscrit au réseau',
+      'This server has not joined the PugStone network yet. Ask the bot owner for an invite code, then run this command once with that code to get started.',
+    )
+  }
+}
 export class EmptyRoster extends DomainError {
   constructor() { super('roster vide', 'Add at least one spot before publishing.') }
 }

@@ -4,7 +4,7 @@ import {
   createInviteCode, revokeInviteCode, redeemInviteCode,
   updateGuildConfig, listActiveGuilds, markGuildNeedsAttention, suspendGuild,
 } from '../../src/domain/network.js'
-import { InviteCodeUnusable } from '../../src/domain/errors.js'
+import { GuildNotOnboarded, InviteCodeUnusable } from '../../src/domain/errors.js'
 
 beforeEach(resetDb)
 afterAll(() => testDb.$disconnect())
@@ -57,6 +57,23 @@ describe('admission au réseau', () => {
     expect(updated.lfgChannelId).toBe('c2')
     expect(updated.recruiterRoleIds).toEqual(['r2', 'r3'])
     expect(updated.timezone).toBe('Europe/Paris')
+  })
+
+  it('refuse de reconfigurer un serveur qui n\'a jamais rejoint le réseau', async () => {
+    await expect(
+      updateGuildConfig(testDb, { discordGuildId: 'jamais-inscrit', lfgChannelId: 'c9' }),
+    ).rejects.toBeInstanceOf(GuildNotOnboarded)
+  })
+
+  it('reconfigure toujours normalement un serveur déjà inscrit (non-régression)', async () => {
+    const code = await createInviteCode(testDb, 'owner')
+    await redeemInviteCode(testDb, config(code, 'g9'))
+    const updated = await updateGuildConfig(testDb, {
+      discordGuildId: 'g9', lfgChannelId: 'c9', timezone: 'America/New_York',
+    })
+    expect(updated.lfgChannelId).toBe('c9')
+    expect(updated.timezone).toBe('America/New_York')
+    expect(updated.status).toBe('ACTIVE')
   })
 })
 
