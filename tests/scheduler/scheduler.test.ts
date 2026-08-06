@@ -51,18 +51,61 @@ describe('expiration', () => {
     const second = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
     expect(second.publicVersion).toBe(first.publicVersion)
   })
+
+  it('reste idempotent sous deux passages concurrents sur la même annonce', async () => {
+    const event = await published(new Date('2026-08-06T18:00:00Z'))
+    const before = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+
+    // Réchauffe le pool de connexions : sans ça, les deux appels de
+    // `expireDueEvents` ci-dessous se retrouvent sérialisés sur une unique
+    // connexion déjà établie (le second attend qu'une deuxième connexion
+    // s'ouvre, largement plus lent qu'un aller-retour SQL local), et la
+    // fenêtre de course entre lecture et écriture ne s'ouvre jamais.
+    await Promise.all([testDb.$queryRaw`SELECT 1`, testDb.$queryRaw`SELECT 1`])
+
+    const [a, b] = await Promise.all([
+      expireDueEvents(testDb, new Date('2026-08-06T18:01:00Z')),
+      expireDueEvents(testDb, new Date('2026-08-06T18:01:00Z')),
+    ])
+
+    expect(a + b).toBe(1)
+    const after = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(after.publicVersion).toBe(before.publicVersion + 1)
+    expect(after.dashboardVersion).toBe(before.dashboardVersion + 1)
+  })
 })
 
 describe('rétention', () => {
-  it('supprime les annonces terminées au-delà de la période de conservation', async () => {
+  it('supprime les annonces terminées au-delà de la période de conservation, candidatures comprises', async () => {
     const event = await published(new Date('2026-06-01T18:00:00Z'))
     await testDb.event.update({ where: { id: event.id }, data: { status: 'EXPIRED' } })
+    const slot = await testDb.slot.findFirstOrThrow({ where: { eventId: event.id } })
+    await testDb.application.create({
+      data: {
+        slotId: slot.id, applicantId: 'app-purged', applicantTag: 'Purged#1',
+        ignRealm: 'Purged-Hyjal', itemLevel: 620, logsUrl: 'https://warcraftlogs.com/purged',
+      },
+    })
+
+    // candidature sur une annonce distincte, non purgeable : la cascade ne
+    // doit pas déborder au-delà de l'annonce ciblée.
+    const survivor = await published(new Date('2026-08-09T18:00:00Z'))
+    const survivorSlot = await testDb.slot.findFirstOrThrow({ where: { eventId: survivor.id } })
+    await testDb.application.create({
+      data: {
+        slotId: survivorSlot.id, applicantId: 'app-survivor', applicantTag: 'Survivor#1',
+        ignRealm: 'Survivor-Hyjal', itemLevel: 620, logsUrl: 'https://warcraftlogs.com/survivor',
+      },
+    })
 
     const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)
     expect(removed).toBe(1)
-    expect(await testDb.event.count()).toBe(0)
-    expect(await testDb.slot.count()).toBe(0)
-    expect(await testDb.eventMessage.count()).toBe(0)
+    expect(await testDb.event.count()).toBe(1)
+    expect(await testDb.slot.count()).toBe(1)
+    expect(await testDb.eventMessage.count({ where: { eventId: event.id } })).toBe(0)
+    expect(await testDb.application.count()).toBe(1)
+    const remaining = await testDb.application.findFirstOrThrow()
+    expect(remaining.applicantId).toBe('app-survivor')
   })
 
   it('conserve les annonces encore actives, même anciennes', async () => {
