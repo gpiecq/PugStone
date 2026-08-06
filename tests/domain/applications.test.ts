@@ -1,0 +1,160 @@
+import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { testDb, resetDb } from '../helpers/db.js'
+import { makeGuild, makeDraft } from '../helpers/factories.js'
+import { addSlot, publishEvent } from '../../src/domain/events.js'
+import { validateApplicationInput, submitApplication, acceptApplication, openSlots } from '../../src/domain/applications.js'
+import { SlotAlreadyFilled, NotAuthorized } from '../../src/domain/errors.js'
+
+beforeEach(resetDb)
+afterAll(() => testDb.$disconnect())
+
+const input = { ignRealm: 'Pug-Hyjal', itemLevel: '626', logsUrl: 'https://www.warcraftlogs.com/character/eu/hyjal/pug' }
+
+async function setup(slots = 1) {
+  const guild = await makeGuild(testDb)
+  const draft = await makeDraft(testDb, guild.id)
+  const created = []
+  for (let i = 0; i < slots; i++) created.push(await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' }))
+  await publishEvent(testDb, draft.id)
+  return { event: draft, slots: created }
+}
+
+const apply = (slotId: string, applicantId: string) =>
+  submitApplication(testDb, {
+    slotId, applicantId, applicantTag: applicantId,
+    ignRealm: input.ignRealm, itemLevel: 626, logsUrl: input.logsUrl, comment: null,
+  })
+
+describe('validation de la saisie', () => {
+  it('accepte une candidature complète', () => {
+    const result = validateApplicationInput(input)
+    expect(result.ok && result.value.itemLevel).toBe(626)
+  })
+
+  it('refuse un iLvl non numérique ou hors plage, en le disant', () => {
+    for (const itemLevel of ['abc', '10', '9999']) {
+      const result = validateApplicationInput({ ...input, itemLevel })
+      expect(result.ok).toBe(false)
+      expect(!result.ok && result.errors.join(' ')).toMatch(/item level/i)
+    }
+  })
+
+  it('refuse un lien qui n\'est pas sur warcraftlogs.com', () => {
+    const result = validateApplicationInput({ ...input, logsUrl: 'https://exemple.com/x' })
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.errors.join(' ')).toMatch(/warcraftlogs/i)
+  })
+
+  it('accumule toutes les erreurs en une seule réponse', () => {
+    const result = validateApplicationInput({ ignRealm: '', itemLevel: 'x', logsUrl: 'nope' })
+    expect(!result.ok && result.errors).toHaveLength(3)
+  })
+})
+
+describe('candidature', () => {
+  it('enregistre la candidature et incrémente uniquement la version dashboard', async () => {
+    const { event, slots } = await setup()
+    const before = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    await apply(slots[0]!.id, 'p1')
+    const after = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(after.dashboardVersion).toBe(before.dashboardVersion + 1)
+    expect(after.publicVersion).toBe(before.publicVersion)
+  })
+
+  it('met à jour la candidature existante au lieu d\'en créer une seconde', async () => {
+    const { slots } = await setup()
+    await apply(slots[0]!.id, 'p1')
+    await submitApplication(testDb, {
+      slotId: slots[0]!.id, applicantId: 'p1', applicantTag: 'p1',
+      ignRealm: 'Pug-Kazzak', itemLevel: 630, logsUrl: input.logsUrl, comment: 'maj',
+    })
+    const rows = await testDb.application.findMany({ where: { slotId: slots[0]!.id } })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.itemLevel).toBe(630)
+  })
+
+  it('refuse une candidature sur une place déjà pourvue', async () => {
+    const { slots } = await setup()
+    const app = await apply(slots[0]!.id, 'p1')
+    await acceptApplication(testDb, { applicationId: app.id, actorId: 'rl-1' })
+    await expect(apply(slots[0]!.id, 'p2')).rejects.toBeInstanceOf(SlotAlreadyFilled)
+  })
+})
+
+describe('acceptation', () => {
+  it('retient un candidat, écarte les autres et pourvoit la place', async () => {
+    const { slots } = await setup()
+    const a = await apply(slots[0]!.id, 'p1')
+    await apply(slots[0]!.id, 'p2')
+    const result = await acceptApplication(testDb, { applicationId: a.id, actorId: 'rl-1' })
+
+    expect(result.applicantId).toBe('p1')
+    expect(result.eventCompleted).toBe(true)
+    const slot = await testDb.slot.findUniqueOrThrow({ where: { id: slots[0]!.id } })
+    expect(slot.status).toBe('FILLED')
+    expect(slot.acceptedApplicationId).toBe(a.id)
+    const discarded = await testDb.application.findMany({ where: { status: 'DISCARDED' } })
+    expect(discarded).toHaveLength(1)
+  })
+
+  it('ne clôt l\'annonce que lorsque toutes les places sont pourvues', async () => {
+    const { event, slots } = await setup(2)
+    const first = await apply(slots[0]!.id, 'p1')
+    const result = await acceptApplication(testDb, { applicationId: first.id, actorId: 'rl-1' })
+    expect(result.eventCompleted).toBe(false)
+    expect((await testDb.event.findUniqueOrThrow({ where: { id: event.id } })).status).toBe('PUBLISHED')
+
+    const second = await apply(slots[1]!.id, 'p2')
+    await acceptApplication(testDb, { applicationId: second.id, actorId: 'rl-1' })
+    expect((await testDb.event.findUniqueOrThrow({ where: { id: event.id } })).status).toBe('COMPLETED')
+  })
+
+  it('incrémente les deux compteurs de version', async () => {
+    const { event, slots } = await setup()
+    const app = await apply(slots[0]!.id, 'p1')
+    const before = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    await acceptApplication(testDb, { applicationId: app.id, actorId: 'rl-1' })
+    const after = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(after.publicVersion).toBeGreaterThan(before.publicVersion)
+    expect(after.dashboardVersion).toBeGreaterThan(before.dashboardVersion)
+  })
+
+  it('refuse l\'acceptation par quelqu\'un d\'autre que l\'auteur', async () => {
+    const { slots } = await setup()
+    const app = await apply(slots[0]!.id, 'p1')
+    await expect(acceptApplication(testDb, { applicationId: app.id, actorId: 'intrus' }))
+      .rejects.toBeInstanceOf(NotAuthorized)
+  })
+})
+
+describe('concurrence', () => {
+  it('n\'accepte qu\'un seul candidat sur deux acceptations simultanées', async () => {
+    const { slots } = await setup()
+    const a = await apply(slots[0]!.id, 'p1')
+    const b = await apply(slots[0]!.id, 'p2')
+
+    const results = await Promise.allSettled([
+      acceptApplication(testDb, { applicationId: a.id, actorId: 'rl-1' }),
+      acceptApplication(testDb, { applicationId: b.id, actorId: 'rl-1' }),
+    ])
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
+    expect(await testDb.application.count({ where: { status: 'ACCEPTED' } })).toBe(1)
+  })
+
+  it('sérialise deux candidatures simultanées sur la dernière place', async () => {
+    const { slots } = await setup()
+    const results = await Promise.allSettled([apply(slots[0]!.id, 'p1'), apply(slots[0]!.id, 'p2')])
+    expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1)
+    expect(await testDb.application.count()).toBe(results.filter((r) => r.status === 'fulfilled').length)
+  })
+})
+
+describe('openSlots', () => {
+  it('ne rend que les places encore ouvertes', async () => {
+    const { event, slots } = await setup(2)
+    const app = await apply(slots[0]!.id, 'p1')
+    await acceptApplication(testDb, { applicationId: app.id, actorId: 'rl-1' })
+    const open = await openSlots(testDb, event.id)
+    expect(open.map((s) => s.id)).toEqual([slots[1]!.id])
+  })
+})
