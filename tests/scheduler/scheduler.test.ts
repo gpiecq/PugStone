@@ -10,10 +10,16 @@ afterAll(() => testDb.$disconnect())
 
 async function published(scheduledAt: Date) {
   const guild = await makeGuild(testDb)
+  // `makeDraft` pose une date de raid future par défaut, pour passer la garde
+  // que `publishEvent` applique désormais sur `scheduledAt` (I8, revue
+  // finale) : une annonce ne peut plus être publiée avec une heure déjà
+  // passée. La date voulue par l'appelant — parfois délibérément passée,
+  // pour simuler une annonce publiée puis rattrapée par l'expiration — n'est
+  // donc forcée qu'APRÈS la publication, en base directement.
   const draft = await makeDraft(testDb, guild.id)
-  await testDb.event.update({ where: { id: draft.id }, data: { scheduledAt } })
   await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
   await publishEvent(testDb, draft.id)
+  await testDb.event.update({ where: { id: draft.id }, data: { scheduledAt } })
   return draft
 }
 
@@ -150,6 +156,31 @@ describe('rétention', () => {
 
     const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)
     expect(removed).toBe(1)
+  })
+
+  it('I8 — purge un brouillon abandonné depuis plus de 7 jours, places comprises', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+    await testDb.event.update({
+      where: { id: draft.id },
+      data: { createdAt: new Date('2026-07-01T00:00:00Z') }, // reste DRAFT
+    })
+
+    const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)
+    expect(removed).toBe(1)
+    expect(await testDb.event.count()).toBe(0)
+    expect(await testDb.slot.count()).toBe(0)
+  })
+
+  it('I8 — conserve un brouillon récent même si la rétention des annonces closes est courte', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id) // createdAt = maintenant, reste DRAFT
+    await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+
+    const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 1)
+    expect(removed).toBe(0)
+    expect(await testDb.event.count()).toBe(1)
   })
 
   it('ne purge pas une annonce close récemment, même avec une date de raid ancienne', async () => {
