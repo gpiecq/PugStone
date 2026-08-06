@@ -111,7 +111,24 @@ export async function acceptApplication(db: Db, params: { applicationId: string;
     })
     const { slot } = application
     if (slot.event.authorId !== params.actorId) throw new NotAuthorized('accepting applications for this listing')
-    if (slot.event.status !== 'PUBLISHED') throw new EventClosed()
+
+    // Verrou d'annonce : posé AVANT le verrou de place, dans cet ordre constant
+    // (Event puis Slot, jamais l'inverse — `submitApplication` ne verrouille que
+    // la place et ne peut donc jamais inverser cet ordre). Il sérialise deux
+    // acceptations concurrentes sur la même annonce, y compris sur deux places
+    // différentes, ce qui protège le comptage `stillOpen` ci-dessous. Il se
+    // synchronise aussi avec `cancelEvent` : celui-ci ne pose pas de verrou
+    // explicite, mais son `UPDATE` sur la ligne `Event` prend le même verrou de
+    // ligne Postgres, donc il attend ou fait attendre `acceptApplication` selon
+    // qui arrive en premier. Le statut de l'annonce est ensuite contrôlé à
+    // partir de CETTE lecture verrouillée, jamais de la lecture initiale
+    // ci-dessus (qui peut être périmée) : c'est ce qui ferme la fenêtre TOCTOU
+    // par laquelle une acceptation pouvait aboutir après une annulation déjà
+    // committée, et faire régresser le statut de CANCELLED à COMPLETED.
+    const lockedEvent = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status FROM "Event" WHERE id = ${slot.eventId} FOR UPDATE
+    `
+    if (lockedEvent[0]?.status !== 'PUBLISHED') throw new EventClosed()
 
     const locked = await tx.$queryRaw<{ status: string }[]>`
       SELECT status FROM "Slot" WHERE id = ${slot.id} FOR UPDATE

@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { testDb, resetDb } from '../helpers/db.js'
 import { makeGuild, makeDraft } from '../helpers/factories.js'
-import { addSlot, publishEvent } from '../../src/domain/events.js'
+import { addSlot, publishEvent, cancelEvent } from '../../src/domain/events.js'
 import { validateApplicationInput, submitApplication, acceptApplication, openSlots } from '../../src/domain/applications.js'
-import { SlotAlreadyFilled, NotAuthorized } from '../../src/domain/errors.js'
+import { SlotAlreadyFilled, NotAuthorized, EventClosed } from '../../src/domain/errors.js'
 
 beforeEach(resetDb)
 afterAll(() => testDb.$disconnect())
@@ -146,6 +146,56 @@ describe('concurrence', () => {
     const results = await Promise.allSettled([apply(slots[0]!.id, 'p1'), apply(slots[0]!.id, 'p2')])
     expect(results.filter((r) => r.status === 'fulfilled').length).toBeGreaterThanOrEqual(1)
     expect(await testDb.application.count()).toBe(results.filter((r) => r.status === 'fulfilled').length)
+  })
+
+  it('accepte deux candidatures simultanées sur les deux dernières places et clôt l\'annonce', async () => {
+    const { event, slots } = await setup(6)
+    const apps = await Promise.all(slots.map((s, i) => apply(s.id, `p${i}`)))
+
+    const results = await Promise.allSettled(
+      apps.map((a) => acceptApplication(testDb, { applicationId: a.id, actorId: 'rl-1' })),
+    )
+
+    expect(results.every((r) => r.status === 'fulfilled')).toBe(true)
+    const finalEvent = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(finalEvent.status).toBe('COMPLETED')
+    const stillOpen = await testDb.slot.count({ where: { eventId: event.id, status: 'OPEN' } })
+    expect(stillOpen).toBe(0)
+  })
+
+  it('une annulation concurrente d\'une acceptation ne laisse jamais l\'annonce repasser de CANCELLED à COMPLETED', async () => {
+    const { event, slots } = await setup()
+    const app = await apply(slots[0]!.id, 'p1')
+
+    const [acceptResult, cancelResult] = await Promise.allSettled([
+      acceptApplication(testDb, { applicationId: app.id, actorId: 'rl-1' }),
+      cancelEvent(testDb, event.id, 'rl-1'),
+    ])
+
+    // cancelEvent n'a aucune raison d'échouer ici (même auteur, annonce existante) :
+    // il gagne toujours la course en dernier ressort, l'annonce doit donc finir
+    // CANCELLED — jamais COMPLETED, ce qui serait une régression CANCELLED -> COMPLETED.
+    expect(cancelResult.status).toBe('fulfilled')
+    const finalEvent = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(finalEvent.status).toBe('CANCELLED')
+
+    const finalSlot = await testDb.slot.findUniqueOrThrow({ where: { id: slots[0]!.id } })
+    const finalApp = await testDb.application.findUniqueOrThrow({ where: { id: app.id } })
+
+    if (acceptResult.status === 'fulfilled') {
+      // L'acceptation a gagné la course sur le verrou d'annonce : elle a légitimement
+      // rempli la place avant que l'annulation ne soit committée.
+      expect(finalSlot.status).toBe('FILLED')
+      expect(finalSlot.acceptedApplicationId).toBe(app.id)
+      expect(finalApp.status).toBe('ACCEPTED')
+    } else {
+      // L'annulation a gagné : l'acceptation doit être refusée, sans avoir touché
+      // ni la place ni la candidature.
+      expect(acceptResult.reason).toBeInstanceOf(EventClosed)
+      expect(finalSlot.status).toBe('OPEN')
+      expect(finalSlot.acceptedApplicationId).toBeNull()
+      expect(finalApp.status).toBe('PENDING')
+    }
   })
 })
 
