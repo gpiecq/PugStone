@@ -214,13 +214,10 @@ export async function runOutboxTick(deps: OutboxDeps): Promise<{ processed: numb
       }
     })
 
-  // Le dashboard (DM -> repli thread) est traité avant la diffusion publique
-  // d'un même tick : sa logique de bascule doit rester déterministe et ne pas
-  // se retrouver en concurrence avec le fan-out public sur la même passerelle.
-  const dashboards = rows.filter((row) => row.kind === 'DASHBOARD')
-  const publics = rows.filter((row) => row.kind === 'PUBLIC')
-  await Promise.all(dashboards.map(process))
-  await Promise.all(publics.map(process))
+  // Une seule passe, toutes catégories confondues : chaque ligne appelle
+  // l'API Discord indépendamment des autres, il n'existe aucune raison
+  // métier d'imposer un ordre entre dashboard et diffusion publique.
+  await Promise.all(rows.map(process))
 
   return { processed, failed }
 }

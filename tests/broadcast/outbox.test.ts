@@ -152,7 +152,11 @@ describe('échecs', () => {
   it('bascule le dashboard sur un thread privé quand les DM sont fermés', async () => {
     await publishedEvent()
     const gateway = new FakeGateway()
-    gateway.failNext(discordError(50007)) // Cannot send messages to this user
+    // Ciblé sur sendDM (pas failNext) : le worker traite toutes les lignes
+    // réclamées en une seule passe parallèle, sans ordre garanti entre
+    // dashboard et diffusion publique — seule la ligne DASHBOARD doit être
+    // affectée par cette erreur.
+    gateway.failNextOn('sendDM', discordError(50007)) // Cannot send messages to this user
     await runOutboxTick(deps(gateway))
 
     expect(gateway.threads).toHaveLength(1)
