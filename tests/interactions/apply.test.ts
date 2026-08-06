@@ -241,6 +241,11 @@ describe('app:submit', () => {
     const guild = await makeGuild(testDb)
     const draft = await makeDraft(testDb, guild.id)
     const slot = await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+    // Une seconde place OPEN maintient l'annonce PUBLISHED une fois la
+    // première pourvue : sinon l'annonce se clôt (EventClosed prend le pas
+    // sur SlotAlreadyFilled avec l'ordre de verrous Event -> Slot, I1), ce
+    // qui ne teste plus le message "just been filled" visé ici.
+    await addSlot(testDb, draft.id, { className: 'PALADIN', specName: 'PROTECTION' })
     await publishEvent(testDb, draft.id)
     await submitApplication(testDb, {
       slotId: slot.id, applicantId: 'first', applicantTag: 'first',

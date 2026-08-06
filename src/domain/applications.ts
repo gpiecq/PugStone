@@ -1,10 +1,15 @@
 // Candidatures et acceptation : la garantie centrale du produit est ici — une
 // place ne peut jamais être attribuée à deux candidats, même si deux Raid
 // Leaders (ou le même, en double-clic) acceptent au même instant. Le verrou
-// pessimiste `FOR UPDATE` porte sur la ligne `Slot` et vit dans la même
-// transaction interactive que les écritures qu'il protège (leçon de la
-// Tâche 9 : hors transaction, `FOR UPDATE` relâche son verrou dès le retour
-// de la requête).
+// pessimiste `FOR UPDATE` porte sur les lignes `Event` puis `Slot` et vit
+// dans la même transaction interactive que les écritures qu'il protège
+// (leçon de la Tâche 9 : hors transaction, `FOR UPDATE` relâche son verrou
+// dès le retour de la requête). L'ordre Event -> Slot est constant dans tout
+// ce fichier (revue finale, constat I1) : `submitApplication` verrouille
+// aussi l'Event via `bumpVersions` (son `UPDATE "Event"`), donc verrouiller
+// le Slot en premier y inverserait l'ordre par rapport à `acceptApplication`
+// et exposerait les deux fonctions à un deadlock Postgres (40P01) sous
+// contention concurrente.
 
 import type { Application, Slot } from '@prisma/client'
 import type { Db } from '../db/client.js'
@@ -13,7 +18,19 @@ import { EventClosed, NotAuthorized, SlotAlreadyFilled, SlotNotFound } from './e
 
 const MIN_ILVL = 100
 const MAX_ILVL = 1500
-const ALLOWED_LOGS_HOSTS = ['warcraftlogs.com', 'www.warcraftlogs.com']
+const LOGS_ROOT_HOST = 'warcraftlogs.com'
+
+/**
+ * `classic.warcraftlogs.com` et `fresh.warcraftlogs.com` hébergent les logs
+ * de WoW Classic : les rejeter comme `www.warcraftlogs.com` ci-dessous le
+ * faisait auparavant refusait des liens pourtant légitimes (revue finale,
+ * constat I5). `endsWith('.' + racine)` évite qu'un domaine comme
+ * `warcraftlogs.com.evil.tld` ne passe pour un sous-domaine légitime : le
+ * séparateur `.` fait partie du suffixe comparé.
+ */
+function isAllowedLogsHost(hostname: string): boolean {
+  return hostname === LOGS_ROOT_HOST || hostname.endsWith(`.${LOGS_ROOT_HOST}`)
+}
 
 export interface ValidatedApplication {
   ignRealm: string
@@ -51,7 +68,7 @@ export function validateApplicationInput(raw: {
   let logsUrl = ''
   try {
     const parsed = new URL(raw.logsUrl.trim())
-    if (!ALLOWED_LOGS_HOSTS.includes(parsed.hostname)) throw new Error('host')
+    if (parsed.protocol !== 'https:' || !isAllowedLogsHost(parsed.hostname)) throw new Error('host')
     logsUrl = parsed.toString()
   } catch {
     errors.push('WarcraftLogs link must be a full URL on warcraftlogs.com.')
@@ -70,15 +87,28 @@ export interface SubmitParams extends ValidatedApplication {
 
 export async function submitApplication(db: Db, params: SubmitParams): Promise<Application> {
   return db.$transaction(async (tx) => {
-    const locked = await tx.$queryRaw<{ id: string; eventId: string; status: string }[]>`
-      SELECT id, "eventId", status FROM "Slot" WHERE id = ${params.slotId} FOR UPDATE
+    // Lecture non verrouillée : seule sert à trouver l'`eventId` de la place
+    // (immuable une fois la place créée), pas à en lire le statut — c'est le
+    // verrou posé juste après qui fait foi.
+    const unlocked = await tx.$queryRaw<{ eventId: string }[]>`
+      SELECT "eventId" FROM "Slot" WHERE id = ${params.slotId}
+    `
+    const eventId = unlocked[0]?.eventId
+    if (!eventId) throw new SlotNotFound()
+
+    // Verrou d'annonce d'abord, verrou de place ensuite — même ordre que
+    // `acceptApplication`, voir le commentaire de fichier ci-dessus.
+    const lockedEvent = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status FROM "Event" WHERE id = ${eventId} FOR UPDATE
+    `
+    if (lockedEvent[0]?.status !== 'PUBLISHED') throw new EventClosed()
+
+    const locked = await tx.$queryRaw<{ id: string; status: string }[]>`
+      SELECT id, status FROM "Slot" WHERE id = ${params.slotId} FOR UPDATE
     `
     const slot = locked[0]
     if (!slot) throw new SlotNotFound()
     if (slot.status === 'FILLED') throw new SlotAlreadyFilled()
-
-    const event = await tx.event.findUniqueOrThrow({ where: { id: slot.eventId } })
-    if (event.status !== 'PUBLISHED') throw new EventClosed()
 
     const application = await tx.application.upsert({
       where: { slotId_applicantId: { slotId: params.slotId, applicantId: params.applicantId } },
@@ -91,7 +121,7 @@ export async function submitApplication(db: Db, params: SubmitParams): Promise<A
         logsUrl: params.logsUrl, comment: params.comment, status: 'PENDING',
       },
     })
-    await bumpVersions(tx, slot.eventId, { public: false })
+    await bumpVersions(tx, eventId, { public: false })
     return application
   })
 }
@@ -113,9 +143,10 @@ export async function acceptApplication(db: Db, params: { applicationId: string;
     if (slot.event.authorId !== params.actorId) throw new NotAuthorized('accepting applications for this listing')
 
     // Verrou d'annonce : posé AVANT le verrou de place, dans cet ordre constant
-    // (Event puis Slot, jamais l'inverse — `submitApplication` ne verrouille que
-    // la place et ne peut donc jamais inverser cet ordre). Il sérialise deux
-    // acceptations concurrentes sur la même annonce, y compris sur deux places
+    // (Event puis Slot, jamais l'inverse — `submitApplication` verrouille lui
+    // aussi l'Event avant le Slot, dans le même ordre, précisément pour ne
+    // jamais l'inverser). Il sérialise deux acceptations concurrentes sur la
+    // même annonce, y compris sur deux places
     // différentes, ce qui protège le comptage `stillOpen` ci-dessous. Il se
     // synchronise aussi avec `cancelEvent` : celui-ci ne pose pas de verrou
     // explicite, mais son `UPDATE` sur la ligne `Event` prend le même verrou de

@@ -45,6 +45,23 @@ describe('validation de la saisie', () => {
     expect(!result.ok && result.errors.join(' ')).toMatch(/warcraftlogs/i)
   })
 
+  it('I5 — accepte les sous-domaines légitimes de warcraftlogs.com (classic, fresh)', () => {
+    for (const host of ['classic.warcraftlogs.com', 'fresh.warcraftlogs.com', 'www.warcraftlogs.com', 'warcraftlogs.com']) {
+      const result = validateApplicationInput({ ...input, logsUrl: `https://${host}/character/eu/hyjal/pug` })
+      expect(result.ok, `${host} devrait être accepté`).toBe(true)
+    }
+  })
+
+  it('I5 — refuse un lien warcraftlogs en http (non chiffré)', () => {
+    const result = validateApplicationInput({ ...input, logsUrl: 'http://www.warcraftlogs.com/character/eu/hyjal/pug' })
+    expect(result.ok).toBe(false)
+  })
+
+  it('I5 — refuse un domaine qui se contente de finir par warcraftlogs.com', () => {
+    const result = validateApplicationInput({ ...input, logsUrl: 'https://warcraftlogs.com.evil.tld/x' })
+    expect(result.ok).toBe(false)
+  })
+
   it('accumule toutes les erreurs en une seule réponse', () => {
     const result = validateApplicationInput({ ignRealm: '', itemLevel: 'x', logsUrl: 'nope' })
     expect(!result.ok && result.errors).toHaveLength(3)
@@ -74,7 +91,12 @@ describe('candidature', () => {
   })
 
   it('refuse une candidature sur une place déjà pourvue', async () => {
-    const { slots } = await setup()
+    // Deux places : la première se remplit sans clore l'annonce (la seconde
+    // reste OPEN), pour isoler SlotAlreadyFilled d'EventClosed — avec une
+    // seule place, remplir l'unique place complète aussi l'annonce, et
+    // l'ordre de verrous Event -> Slot (I1) ferait alors remonter EventClosed
+    // en premier, ce qui est correct mais ne teste plus ce que ce cas vise.
+    const { slots } = await setup(2)
     const app = await apply(slots[0]!.id, 'p1')
     await acceptApplication(testDb, { applicationId: app.id, actorId: 'rl-1' })
     await expect(apply(slots[0]!.id, 'p2')).rejects.toBeInstanceOf(SlotAlreadyFilled)
