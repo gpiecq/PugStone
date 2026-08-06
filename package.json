@@ -1,0 +1,40 @@
+{
+  "name": "pugstone",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpiecq/PugStone.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/gpiecq/PugStone/issues"
+  },
+  "homepage": "https://github.com/gpiecq/PugStone#readme",
+  "dependencies": {
+    "@prisma/client": "^7.9.1",
+    "discord.js": "^14.27.0",
+    "luxon": "^3.7.2",
+    "p-limit": "^7.3.1",
+    "pino": "^10.3.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/luxon": "^3.7.3",
+    "@types/node": "^26.1.2",
+    "prisma": "^7.9.1",
+    "tsx": "^4.23.9",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
