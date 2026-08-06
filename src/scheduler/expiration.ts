@@ -14,7 +14,7 @@ import type { Db } from '../db/client.js'
 export async function expireDueEvents(db: Db, now: Date): Promise<number> {
   const result = await db.event.updateMany({
     where: { status: 'PUBLISHED', scheduledAt: { lte: now } },
-    data: { status: 'EXPIRED', publicVersion: { increment: 1 }, dashboardVersion: { increment: 1 } },
+    data: { status: 'EXPIRED', closedAt: now, publicVersion: { increment: 1 }, dashboardVersion: { increment: 1 } },
   })
   return result.count
 }

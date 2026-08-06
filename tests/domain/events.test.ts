@@ -123,6 +123,22 @@ describe('annulation', () => {
     expect(event.publicVersion).toBe(2)
   })
 
+  it('renseigne closedAt à l\'instant de l\'annulation', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
+    await publishEvent(testDb, draft.id)
+
+    const before = Date.now()
+    await cancelEvent(testDb, draft.id, 'rl-1')
+    const after = Date.now()
+
+    const event = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(event.closedAt).not.toBeNull()
+    expect(event.closedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000)
+    expect(event.closedAt!.getTime()).toBeLessThanOrEqual(after + 1000)
+  })
+
   it('refuse l\'annulation par un tiers', async () => {
     const guild = await makeGuild(testDb)
     const draft = await makeDraft(testDb, guild.id)

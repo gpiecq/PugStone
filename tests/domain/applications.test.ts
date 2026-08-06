@@ -109,6 +109,25 @@ describe('acceptation', () => {
     expect((await testDb.event.findUniqueOrThrow({ where: { id: event.id } })).status).toBe('COMPLETED')
   })
 
+  it('renseigne closedAt uniquement quand l\'acceptation clôt l\'annonce', async () => {
+    const { event, slots } = await setup(2)
+    const first = await apply(slots[0]!.id, 'p1')
+    await acceptApplication(testDb, { applicationId: first.id, actorId: 'rl-1' })
+    const stillOpen = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(stillOpen.closedAt).toBeNull()
+
+    const before = Date.now()
+    const second = await apply(slots[1]!.id, 'p2')
+    await acceptApplication(testDb, { applicationId: second.id, actorId: 'rl-1' })
+    const after = Date.now()
+
+    const completed = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(completed.status).toBe('COMPLETED')
+    expect(completed.closedAt).not.toBeNull()
+    expect(completed.closedAt!.getTime()).toBeGreaterThanOrEqual(before - 1000)
+    expect(completed.closedAt!.getTime()).toBeLessThanOrEqual(after + 1000)
+  })
+
   it('incrémente les deux compteurs de version', async () => {
     const { event, slots } = await setup()
     const app = await apply(slots[0]!.id, 'p1')

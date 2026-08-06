@@ -97,7 +97,7 @@ export async function cancelEvent(db: Db, eventId: string, actorId: string): Pro
   await db.$transaction(async (tx) => {
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId } })
     if (event.authorId !== actorId) throw new NotAuthorized('cancelling this listing')
-    await tx.event.update({ where: { id: eventId }, data: { status: 'CANCELLED' } })
+    await tx.event.update({ where: { id: eventId }, data: { status: 'CANCELLED', closedAt: new Date() } })
     await bumpVersions(tx, eventId, { public: true })
   })
 }

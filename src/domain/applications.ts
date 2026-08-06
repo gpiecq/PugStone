@@ -148,7 +148,7 @@ export async function acceptApplication(db: Db, params: { applicationId: string;
     const stillOpen = await tx.slot.count({ where: { eventId: slot.eventId, status: 'OPEN' } })
     const eventCompleted = stillOpen === 0
     if (eventCompleted) {
-      await tx.event.update({ where: { id: slot.eventId }, data: { status: 'COMPLETED' } })
+      await tx.event.update({ where: { id: slot.eventId }, data: { status: 'COMPLETED', closedAt: new Date() } })
     }
     await bumpVersions(tx, slot.eventId, { public: true })
 

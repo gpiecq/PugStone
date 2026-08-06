@@ -52,6 +52,14 @@ describe('expiration', () => {
     expect(second.publicVersion).toBe(first.publicVersion)
   })
 
+  it('renseigne closedAt avec le `now` injecté, pas l\'horloge système', async () => {
+    const event = await published(new Date('2026-08-06T18:00:00Z'))
+    const now = new Date('2026-08-06T18:01:00Z')
+    await expireDueEvents(testDb, now)
+    const after = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
+    expect(after.closedAt).toEqual(now)
+  })
+
   it('reste idempotent sous deux passages concurrents sur la même annonce', async () => {
     const event = await published(new Date('2026-08-06T18:00:00Z'))
     const before = await testDb.event.findUniqueOrThrow({ where: { id: event.id } })
@@ -111,5 +119,52 @@ describe('rétention', () => {
   it('conserve les annonces encore actives, même anciennes', async () => {
     await published(new Date('2026-06-01T18:00:00Z'))
     expect(await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)).toBe(0)
+  })
+
+  it('purge selon la date de clôture réelle, pas selon la date de raid prévue', async () => {
+    // Raid prévu dans un futur lointain, mais annulé il y a plus de 30 jours :
+    // c'est le cas qui motive la Tâche 11b. Avec l'ancienne règle (ancrée sur
+    // scheduledAt), cette annonce ne serait purgeable qu'en 2027.
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await testDb.event.update({
+      where: { id: draft.id },
+      data: {
+        scheduledAt: new Date('2027-06-01T18:00:00Z'),
+        status: 'CANCELLED',
+        closedAt: new Date('2026-07-01T18:00:00Z'),
+      },
+    })
+
+    const removed = await purgeOldEvents(testDb, new Date('2026-08-01T18:00:00Z'), 30)
+    expect(removed).toBe(1)
+  })
+
+  it('se replie sur scheduledAt quand closedAt est nul (annonces closes avant la migration)', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await testDb.event.update({
+      where: { id: draft.id },
+      data: { scheduledAt: new Date('2026-06-01T18:00:00Z'), status: 'EXPIRED', closedAt: null },
+    })
+
+    const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)
+    expect(removed).toBe(1)
+  })
+
+  it('ne purge pas une annonce close récemment, même avec une date de raid ancienne', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+    await testDb.event.update({
+      where: { id: draft.id },
+      data: {
+        scheduledAt: new Date('2026-06-01T18:00:00Z'),
+        status: 'CANCELLED',
+        closedAt: new Date('2026-08-01T18:00:00Z'),
+      },
+    })
+
+    const removed = await purgeOldEvents(testDb, new Date('2026-08-06T18:00:00Z'), 30)
+    expect(removed).toBe(0)
   })
 })

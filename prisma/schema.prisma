@@ -88,6 +88,7 @@ model Event {
   dashboardChannelId String?
   dashboardMessageId String?
   createdAt          DateTime       @default(now())
+  closedAt           DateTime?
   slots              Slot[]
   messages           EventMessage[]
 
