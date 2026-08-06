@@ -10,6 +10,7 @@ import { WOW_CLASSES, findClass, findSpec } from '../config/wow.js'
 import { classEmoji, type EmojiMap } from '../config/emojis.js'
 import { registerHandler, type HandlerContext } from '../bot/router.js'
 import { addSlot, loadEventView, publishEvent, removeSlot } from '../domain/events.js'
+import { NotAuthorized } from '../domain/errors.js'
 
 /**
  * Le brouillon vit en base, pas en mémoire : le constructeur se ré-affiche à
@@ -79,20 +80,44 @@ export function renderRosterBuilder(view: EventView, selectedClass: string | nul
   }
 }
 
+async function sendUpdate(ctx: HandlerContext, payload: unknown): Promise<void> {
+  await (ctx.interaction as unknown as { update: (o: unknown) => Promise<unknown> }).update(payload)
+}
+
+/**
+ * Charge le brouillon et vérifie que l'acteur de l'interaction est bien son
+ * auteur. Le seul rempart qu'offrirait sinon un `custom_id` (message
+ * éphémère, cuid imprévisible) n'est pas un contrôle d'accès : un tiers qui
+ * rejoue l'identifiant pourrait sinon modifier ou publier le brouillon d'un
+ * autre recruteur. Appelé avant toute mutation, dans les quatre handlers —
+ * cohérent avec `cancelEvent`/`acceptApplication`, qui lèvent la même erreur
+ * pour le même motif ailleurs dans le domaine.
+ */
+async function requireAuthor(ctx: HandlerContext, eventId: string): Promise<EventView> {
+  const view = await loadEventView(ctx.deps.db, eventId)
+  if (view.event.authorId !== ctx.interaction.user.id) {
+    throw new NotAuthorized('managing this roster')
+  }
+  return view
+}
+
 async function refresh(ctx: HandlerContext, eventId: string, selectedClass: string | null): Promise<void> {
   const view = await loadEventView(ctx.deps.db, eventId)
-  const payload = renderRosterBuilder(view, selectedClass, ctx.deps.emojis)
-  await (ctx.interaction as unknown as { update: (o: unknown) => Promise<unknown> }).update(payload)
+  await sendUpdate(ctx, renderRosterBuilder(view, selectedClass, ctx.deps.emojis))
 }
 
 export function registerRosterHandlers(): void {
   registerHandler('roster', 'class', async (ctx) => {
+    const view = await requireAuthor(ctx, ctx.id)
     const value = (ctx.interaction as unknown as { values: string[] }).values[0]!
-    await refresh(ctx, ctx.id, value)
+    // Aucune mutation ici : la vue déjà chargée par requireAuthor reste à jour,
+    // pas besoin de la relire.
+    await sendUpdate(ctx, renderRosterBuilder(view, value, ctx.deps.emojis))
   })
 
   registerHandler('roster', 'spec', async (ctx) => {
     const [eventId, className] = ctx.id.split('|') as [string, string]
+    await requireAuthor(ctx, eventId)
     const specName = (ctx.interaction as unknown as { values: string[] }).values[0]!
     // `addSlot` lève un DomainError générique pour une spé inconnue (elle ne
     // devrait jamais l'être : les options du select viennent de WOW_CLASSES) —
@@ -102,18 +127,20 @@ export function registerRosterHandlers(): void {
   })
 
   registerHandler('roster', 'remove', async (ctx) => {
+    await requireAuthor(ctx, ctx.id)
     const slotId = (ctx.interaction as unknown as { values: string[] }).values[0]!
     await removeSlot(ctx.deps.db, slotId)
     await refresh(ctx, ctx.id, null)
   })
 
   registerHandler('roster', 'publish', async (ctx) => {
+    await requireAuthor(ctx, ctx.id)
     // `publishEvent` peut lever EmptyRoster ou NoActivePartners malgré le
     // bouton désactivé côté client (état re-synchronisé entre-temps, race
     // avec une suppression concurrente) : dispatchInteraction transforme ces
     // erreurs en message lisible, aucun try/catch local nécessaire.
     const { targets } = await publishEvent(ctx.deps.db, ctx.id)
-    await (ctx.interaction as unknown as { update: (o: unknown) => Promise<unknown> }).update({
+    await sendUpdate(ctx, {
       content: `Listing published to ${targets} server(s). Your dashboard is on its way by DM.`,
       embeds: [], components: [],
     })
