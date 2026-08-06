@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum GuildStatus {
+  ACTIVE
+  NEEDS_ATTENTION
+  SUSPENDED
+}
+
+enum Difficulty {
+  NORMAL
+  HEROIC
+  MYTHIC
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+enum SlotStatus {
+  OPEN
+  FILLED
+}
+
+enum AppStatus {
+  PENDING
+  ACCEPTED
+  DISCARDED
+}
+
+enum WowRole {
+  TANK
+  HEALER
+  DPS
+}
+
+enum MessageKind {
+  PUBLIC
+  DASHBOARD
+}
+
+model Guild {
+  id               String      @id @default(cuid())
+  discordGuildId   String      @unique
+  lfgChannelId     String?
+  recruiterRoleIds String[]
+  timezone         String
+  status           GuildStatus @default(ACTIVE)
+  statusReason     String?
+  joinedAt         DateTime    @default(now())
+  inviteCode       InviteCode?
+  events           Event[]
+
+  @@index([status])
+}
+
+model InviteCode {
+  code        String    @id
+  createdBy   String
+  usedByGuild String?   @unique
+  guild       Guild?    @relation(fields: [usedByGuild], references: [id])
+  usedAt      DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Event {
+  id                 String         @id @default(cuid())
+  originGuildId      String
+  originGuild        Guild          @relation(fields: [originGuildId], references: [id], onDelete: Cascade)
+  authorId           String
+  authorContact      String         @default("")
+  raidName           String
+  difficulty         Difficulty
+  scheduledAt        DateTime
+  status             EventStatus    @default(DRAFT)
+  publicVersion      Int            @default(0)
+  dashboardVersion   Int            @default(0)
+  dashboardChannelId String?
+  dashboardMessageId String?
+  createdAt          DateTime       @default(now())
+  slots              Slot[]
+  messages           EventMessage[]
+
+  @@index([status, scheduledAt])
+}
+
+model Slot {
+  id                    String        @id @default(cuid())
+  eventId               String
+  event                 Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  className             String
+  specName              String
+  role                  WowRole
+  status                SlotStatus    @default(OPEN)
+  acceptedApplicationId String?       @unique
+  position              Int
+  applications          Application[]
+
+  @@index([eventId])
+}
+
+model Application {
+  id           String    @id @default(cuid())
+  slotId       String
+  slot         Slot      @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  applicantId  String
+  applicantTag String
+  ignRealm     String
+  itemLevel    Int
+  logsUrl      String
+  comment      String?
+  status       AppStatus @default(PENDING)
+  createdAt    DateTime  @default(now())
+
+  @@unique([slotId, applicantId])
+  @@index([slotId, status])
+}
+
+model EventMessage {
+  id            String      @id @default(cuid())
+  eventId       String
+  event         Event       @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  guildId       String
+  channelId     String
+  messageId     String?
+  kind          MessageKind
+  syncedVersion Int         @default(-1)
+  disabled      Boolean     @default(false)
+  attempts      Int         @default(0)
+  nextAttemptAt DateTime    @default(now())
+  lastError     String?
+
+  @@unique([eventId, guildId, kind])
+  @@index([disabled, nextAttemptAt])
+}

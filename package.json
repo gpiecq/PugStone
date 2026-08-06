@@ -22,6 +22,7 @@
   },
   "homepage": "https://github.com/gpiecq/PugStone#readme",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "discord.js": "^14.27.0",
     "luxon": "^3.7.2",
