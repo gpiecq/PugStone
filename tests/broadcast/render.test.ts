@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderPublicMessage, renderDashboardMessage } from '../../src/broadcast/render.js'
+import { renderPublicMessage, renderDashboardMessage, escapeMarkdown } from '../../src/broadcast/render.js'
 import type { EventView } from '../../src/domain/events.js'
 
 const emojis = { MAGE: '<:mage:1>', PALADIN: '<:pala:2>' }
@@ -51,6 +51,14 @@ describe('embed public', () => {
     const row = payload.components[0] as { components: { custom_id: string; label: string; disabled: boolean }[] }
     expect(row.components[0]).toMatchObject({ custom_id: 'pug:1:app:open:e1', label: '⚔️ Apply', disabled: false })
   })
+
+  it('affiche un texte de repli quand l\'annonce n\'a aucune place (au lieu d\'une section vide)', () => {
+    const payload = renderPublicMessage(view({}, []), emojis)
+    const embed = payload.embeds[0] as { description: string }
+    expect(embed.description).toContain('**Looking for:**')
+    expect(embed.description.length).toBeGreaterThan(0)
+    expect(embed.description).toContain('No spots configured yet')
+  })
 })
 
 describe('dashboard', () => {
@@ -92,5 +100,90 @@ describe('dashboard', () => {
   it('affiche un message d\'attente quand personne n\'a postulé', () => {
     const payload = renderDashboardMessage(view({}, [{}]), emojis)
     expect((payload.embeds[0] as { description: string }).description).toContain('No applications yet')
+  })
+
+  it('affiche un texte de repli quand l\'annonce n\'a aucune place, sans description vide', () => {
+    const payload = renderDashboardMessage(view({}, []), emojis)
+    const embed = payload.embeds[0] as { description: string }
+    expect(embed.description.length).toBeGreaterThan(0)
+    expect(embed.description).toContain('No spots configured yet')
+  })
+
+  it('C1 — au plus 5 action rows pour 8 places ouvertes ayant chacune des candidatures (limite Discord)', () => {
+    const slots = Array.from({ length: 8 }, (_, i) => ({
+      id: `s${i}`,
+      applications: [{ id: `a${i}`, applicantTag: `P${i}`, ignRealm: `P${i}-Realm`, itemLevel: 620, logsUrl: 'https://l', comment: null }],
+    }))
+    const payload = renderDashboardMessage(view({}, slots as never), emojis)
+    expect(payload.components.length).toBeLessThanOrEqual(5)
+    const closeButton = payload.components
+      .flatMap((c) => (c as { components: { custom_id: string }[] }).components)
+      .find((c) => c.custom_id === 'pug:1:dash:close:e1')
+    expect(closeButton).toBeDefined()
+    // Les places au-delà du plafond restent signalées dans le texte, pas silencieusement amputées.
+    const embed = payload.embeds[0] as { description: string }
+    expect(embed.description).toMatch(/not shown|not actionable/)
+  })
+
+  it('C1 — description bornée à 4096 caractères pour 3 places à 25 candidats chacune', () => {
+    const makeApplications = (prefix: string) => Array.from({ length: 25 }, (_, i) => ({
+      id: `${prefix}-a${i}`, applicantTag: `P${i}`, ignRealm: `${prefix}-Player${i}-Realm`,
+      itemLevel: 600 + i, logsUrl: 'https://warcraftlogs.com/reports/abcdefgh1234', comment: 'Available all week, flexible on role',
+    }))
+    const slots = [
+      { id: 's0', applications: makeApplications('s0') },
+      { id: 's1', applications: makeApplications('s1') },
+      { id: 's2', applications: makeApplications('s2') },
+    ]
+    const payload = renderDashboardMessage(view({}, slots as never), emojis)
+    const embed = payload.embeds[0] as { description: string }
+    expect(embed.description.length).toBeLessThanOrEqual(4096)
+    const closeButton = payload.components
+      .flatMap((c) => (c as { components: { custom_id: string }[] }).components)
+      .find((c) => c.custom_id === 'pug:1:dash:close:e1')
+    expect(closeButton).toBeDefined()
+  })
+})
+
+describe('I6 — échappement markdown dans le dashboard', () => {
+  it('escapeMarkdown échappe les caractères spéciaux markdown', () => {
+    expect(escapeMarkdown('a`b*c_d[e]f\\g|h')).toBe('a\\`b\\*c\\_d\\[e\\]f\\\\g\\|h')
+  })
+
+  it('un commentaire contenant un lien markdown s\'affiche littéralement, pas comme un second lien', () => {
+    const payload = renderDashboardMessage(
+      view({}, [{
+        applications: [{
+          id: 'a1', applicantTag: 'Pug', ignRealm: 'Pug-Hyjal', itemLevel: 620,
+          logsUrl: 'https://warcraftlogs.com/x', comment: '[clique](https://evil.example)',
+        }],
+      }] as never),
+      emojis,
+    )
+    const embed = payload.embeds[0] as { description: string }
+    // Les crochets sont échappés, ce qui empêche `[clique](https://evil.example)`
+    // de former un second lien markdown ; les parenthèses seules (hors
+    // crochets) ne déclenchent aucune syntaxe de lien.
+    expect(embed.description).toContain('\\[clique\\](https://evil.example)')
+  })
+
+  it('une URL de logs contenant une parenthèse fermante ne referme pas le lien markdown prématurément', () => {
+    const payload = renderDashboardMessage(
+      view({}, [{
+        applications: [{
+          id: 'a1', applicantTag: 'Pug', ignRealm: 'Pug-Hyjal', itemLevel: 620,
+          logsUrl: 'https://warcraftlogs.com/x)[cliquez ici](https://phishing.example', comment: null,
+        }],
+      }] as never),
+      emojis,
+    )
+    const embed = payload.embeds[0] as { description: string }
+    const line = embed.description.split('\n').find((l) => l.includes('[Logs]'))!
+    // Le `)` d'origine dans l'URL malveillante a été encodé en `%29` : il ne
+    // reste qu'un seul `)` non échappé dans la ligne, celui du template
+    // `[Logs](...)` lui-même. Sans second `)` disponible, `[cliquez ici](...)`
+    // ne peut jamais se refermer pour former un second lien cliquable.
+    expect(line.match(/\)/g)?.length).toBe(1)
+    expect(line).toContain('%29')
   })
 })
