@@ -75,3 +75,39 @@ describe('cibles de diffusion', () => {
     expect(active.map((g) => g.discordGuildId)).toEqual(['gC'])
   })
 })
+
+describe('suspension d\'un serveur', () => {
+  it('suspend le serveur et coupe l\'émission de ses messages sans toucher aux autres', async () => {
+    const codeX = await createInviteCode(testDb, 'owner')
+    const codeY = await createInviteCode(testDb, 'owner')
+    const guildX = await redeemInviteCode(testDb, config(codeX, 'gX'))
+    await redeemInviteCode(testDb, config(codeY, 'gY'))
+
+    const event = await testDb.event.create({
+      data: {
+        originGuildId: guildX.id,
+        authorId: 'author',
+        raidName: 'Nerub-ar Palace',
+        difficulty: 'HEROIC',
+        scheduledAt: new Date(),
+      },
+    })
+    const messageX = await testDb.eventMessage.create({
+      data: { eventId: event.id, guildId: 'gX', channelId: 'c1', kind: 'PUBLIC' },
+    })
+    const messageY = await testDb.eventMessage.create({
+      data: { eventId: event.id, guildId: 'gY', channelId: 'c1', kind: 'PUBLIC' },
+    })
+
+    await suspendGuild(testDb, 'gX')
+
+    const suspended = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'gX' } })
+    expect(suspended.status).toBe('SUSPENDED')
+
+    const updatedX = await testDb.eventMessage.findUniqueOrThrow({ where: { id: messageX.id } })
+    expect(updatedX.disabled).toBe(true)
+
+    const updatedY = await testDb.eventMessage.findUniqueOrThrow({ where: { id: messageY.id } })
+    expect(updatedY.disabled).toBe(false)
+  })
+})
