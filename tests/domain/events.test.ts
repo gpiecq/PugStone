@@ -1,11 +1,46 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
 import { testDb, resetDb } from '../helpers/db.js'
 import { makeGuild, makeDraft } from '../helpers/factories.js'
-import { addSlot, removeSlot, publishEvent, cancelEvent, loadEventView } from '../../src/domain/events.js'
+import { createDraft, addSlot, removeSlot, setContact, publishEvent, cancelEvent, loadEventView } from '../../src/domain/events.js'
 import { EmptyRoster, NoActivePartners, NotAuthorized } from '../../src/domain/errors.js'
 
 beforeEach(resetDb)
 afterAll(() => testDb.$disconnect())
+
+describe('brouillon', () => {
+  it('createDraft persiste chaque champ transmis sans les confondre entre eux', async () => {
+    const guild = await makeGuild(testDb)
+    const scheduledAt = new Date('2026-10-15T20:30:00Z')
+    const draft = await createDraft(testDb, {
+      originGuildId: guild.id,
+      authorId: 'author-distinct',
+      raidName: 'Liberation of Undermine',
+      difficulty: 'MYTHIC',
+      scheduledAt,
+    })
+
+    const reloaded = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(reloaded.originGuildId).toBe(guild.id)
+    expect(reloaded.authorId).toBe('author-distinct')
+    expect(reloaded.raidName).toBe('Liberation of Undermine')
+    expect(reloaded.difficulty).toBe('MYTHIC')
+    expect(reloaded.scheduledAt).toEqual(scheduledAt)
+    expect(reloaded.status).toBe('DRAFT')
+  })
+
+  it('setContact met à jour authorContact et un second appel remplace la valeur précédente', async () => {
+    const guild = await makeGuild(testDb)
+    const draft = await makeDraft(testDb, guild.id)
+
+    await setContact(testDb, draft.id, 'RaidLead#1234')
+    const first = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(first.authorContact).toBe('RaidLead#1234')
+
+    await setContact(testDb, draft.id, 'discord.gg/nouveau-contact')
+    const second = await testDb.event.findUniqueOrThrow({ where: { id: draft.id } })
+    expect(second.authorContact).toBe('discord.gg/nouveau-contact')
+  })
+})
 
 describe('construction du roster', () => {
   it('déduit le rôle de la spé et incrémente la position', async () => {
