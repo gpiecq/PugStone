@@ -11,5 +11,20 @@ services:
       test: ['CMD-SHELL', 'pg_isready -U pugstone']
       interval: 5s
       retries: 10
+  bot:
+    build: .
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      # Port 5432, pas 5433 : à l'intérieur du réseau Docker, le service
+      # `postgres` écoute sur son port interne (le mapping 5433:5432 ne vaut
+      # que pour l'hôte, voir .env pour la valeur utilisée en développement
+      # local hors conteneur).
+      DATABASE_URL: postgresql://pugstone:pugstone@postgres:5432/pugstone
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_APP_ID: ${DISCORD_APP_ID}
+      OWNER_DISCORD_ID: ${OWNER_DISCORD_ID}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    restart: unless-stopped
 volumes:
   pgdata:

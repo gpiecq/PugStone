@@ -1,0 +1,33 @@
+name: CI
+on:
+  push: { branches: [develop, main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pugstone
+          POSTGRES_PASSWORD: pugstone
+          POSTGRES_DB: pugstone_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://pugstone:pugstone@localhost:5432/pugstone_test
+      TEST_DATABASE_URL: postgresql://pugstone:pugstone@localhost:5432/pugstone_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+      - run: npm ci
+      # Sans cette génération, le client Prisma en cache dans node_modules
+      # ignore les champs ajoutés par les migrations récentes (ex. closedAt,
+      # Tâche 11b) et `npm run typecheck` échoue sur du code par ailleurs correct.
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm run typecheck
+      - run: npm test

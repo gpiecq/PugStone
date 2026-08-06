@@ -5,6 +5,11 @@ import { logger } from '../logger.js'
 export interface CommandModule {
   data: SlashCommandBuilder
   execute: (interaction: never, deps: never) => Promise<void>
+  // Optionnel : seul /cancel en a besoin aujourd'hui (Tâche 17, revue —
+  // sans ce champ, `cancelCommand.autocomplete` n'était atteignable par
+  // aucun type exposé et l'écouteur `interactionCreate` devait le
+  // contourner par un cast ad hoc).
+  autocomplete?: (interaction: never, deps: never) => Promise<void>
 }
 
 export function createClient(): Client {
