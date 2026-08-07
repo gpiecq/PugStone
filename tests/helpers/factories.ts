@@ -20,7 +20,12 @@ export async function makeDraft(db: Db, guildId: string, authorId = 'rl-1') {
     data: {
       originGuildId: guildId, authorId, authorContact: 'RaidLead#1234',
       raidName: 'Nerub-ar Palace', difficulty: 'HEROIC',
-      scheduledAt: new Date('2026-09-01T19:00:00Z'),
+      // Relative à l'instant courant plutôt qu'absolue : `publishEvent` refuse
+      // désormais de publier une annonce dont `scheduledAt` est déjà passé
+      // (I8, revue finale). Une date codée en dur finirait, un jour, par se
+      // retrouver dans le passé et faire échouer tous les appelants de cette
+      // fabrique qui publient ensuite le brouillon.
+      scheduledAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     },
   })
 }

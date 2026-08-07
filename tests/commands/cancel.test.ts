@@ -21,7 +21,10 @@ async function publishedDraft(guildId: string, authorId: string, raidName = 'Ner
   const draft = await testDb.event.create({
     data: {
       originGuildId: guildId, authorId, authorContact: 'RaidLead#1234',
-      raidName, difficulty: 'HEROIC', scheduledAt: new Date('2026-09-01T19:00:00Z'),
+      // Relative à l'instant courant : cette annonce est publiée juste après
+      // (voir plus bas), et `publishEvent` refuse toute `scheduledAt` déjà
+      // passée (I8, revue finale).
+      raidName, difficulty: 'HEROIC', scheduledAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     },
   })
   await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
@@ -73,7 +76,7 @@ describe('/cancel autocomplete', () => {
     const draftMine = await testDb.event.create({ // le mien, mais encore en brouillon
       data: {
         originGuildId: guild.id, authorId: 'rl-1', authorContact: 'RaidLead#1234',
-        raidName: 'Amirdrassil', difficulty: 'MYTHIC', scheduledAt: new Date('2026-09-02T19:00:00Z'),
+        raidName: 'Amirdrassil', difficulty: 'MYTHIC', scheduledAt: new Date(Date.now() + 31 * 24 * 60 * 60 * 1000),
       },
     })
 
@@ -94,7 +97,10 @@ describe('/cancel autocomplete', () => {
         data: {
           originGuildId: guild.id, authorId: 'rl-1', authorContact: 'RaidLead#1234',
           raidName: `Raid ${i}`, difficulty: 'NORMAL',
-          scheduledAt: new Date(Date.UTC(2026, 8, 1 + i, 19)),
+          // Relative à l'instant courant, chaque annonce décalée d'un jour :
+          // toutes sont ensuite publiées (voir plus bas), et `publishEvent`
+          // refuse toute `scheduledAt` déjà passée.
+          scheduledAt: new Date(Date.now() + (i + 1) * 24 * 60 * 60 * 1000),
         },
       })
       await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
