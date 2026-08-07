@@ -24,9 +24,15 @@ acceptations, complétion ou expiration).
    **General Information**).
 3. Onglet **Installation** : générer un lien d'invitation avec les scopes
    `applications.commands` et `bot`, et les permissions bot suivantes :
+   - `View Channel`
    - `Send Messages`
    - `Embed Links`
    - `Create Private Threads`
+
+   `View Channel`, `Send Messages` et `Embed Links` sont exigées sur le salon
+   LFG lui-même : `/set-lfg-channel` les vérifie et refuse la configuration en
+   nommant celles qui manquent. `Create Private Threads` ne sert que de repli,
+   quand un Raid Leader a fermé ses messages privés.
 4. Inviter le bot sur chaque serveur partenaire avec ce lien.
 5. `OWNER_DISCORD_ID` est l'identifiant Discord (pas le pseudo) du compte
    autorisé à exécuter `/network` — en général l'exploitant du bot.
@@ -71,6 +77,12 @@ pointe sur `postgres:5432`.
 
 `npm run dev` démarre le bot avec rechargement à chaud (`tsx watch`) ; il ne
 fait rien s'il est importé par les tests (`src/index.ts`).
+
+Le fichier `.env` est chargé explicitement (`dotenv`) par le point d'entrée du
+bot **et** par `prisma.config.ts` : Prisma 7 ne le lit plus automatiquement, et
+sans cela `npm run migrate` échouerait à résoudre `DATABASE_URL` alors même que
+le fichier existe. En conteneur, les variables viennent de l'environnement et
+l'absence de fichier `.env` est sans conséquence.
 
 ## Tests
 

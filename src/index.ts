@@ -1,3 +1,9 @@
+// Doit précéder tout autre import : `src/db/client.ts` lit la configuration
+// validée dès son évaluation, donc `.env` doit être chargé avant.
+// En conteneur, les variables viennent de l'environnement et l'absence de
+// fichier `.env` est sans conséquence.
+import 'dotenv/config'
+
 import { Events } from 'discord.js'
 import { readFileSync } from 'node:fs'
 import { env } from './config/env.js'

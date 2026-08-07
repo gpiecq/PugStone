@@ -1,3 +1,8 @@
+// Prisma 7 ne charge plus `.env` automatiquement : sans cet import, la CLI
+// (`prisma migrate deploy`, `prisma studio`, ...) échoue à résoudre
+// `DATABASE_URL` alors même que le fichier existe.
+import 'dotenv/config'
+
 import { defineConfig, env } from 'prisma/config'
 
 type Env = {
