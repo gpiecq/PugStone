@@ -1,6 +1,6 @@
 # PugStone
 
-Bot Discord de LFG (Looking For Group) inter-serveurs pour World of Warcraft.
+Bot Discord de LFM (Looking For More) inter-serveurs pour World of Warcraft.
 Un Raid Leader publie une annonce de recrutement sur son serveur via
 `/recruit` ; PugStone la diffuse automatiquement sur tous les serveurs
 partenaires du réseau, centralise les candidatures et tient à jour un
@@ -30,7 +30,7 @@ acceptations, complétion ou expiration).
    - `Create Private Threads`
 
    `View Channel`, `Send Messages` et `Embed Links` sont exigées sur le salon
-   LFG lui-même : `/set-lfg-channel` les vérifie et refuse la configuration en
+   LFM lui-même : `/set-lfm-channel` les vérifie et refuse la configuration en
    nommant celles qui manquent. `Create Private Threads` ne sert que de repli,
    quand un Raid Leader a fermé ses messages privés.
 4. Inviter le bot sur chaque serveur partenaire avec ce lien.

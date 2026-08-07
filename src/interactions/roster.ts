@@ -62,7 +62,7 @@ export function renderRosterBuilder(view: EventView, selectedClass: string | nul
   rows.push({
     type: 1,
     components: [{
-      type: 2, style: 3, label: 'Publish LFG',
+      type: 2, style: 3, label: 'Publish LFM',
       custom_id: buildCustomId('roster', 'publish', event.id),
       disabled: slots.length === 0,
     }],
@@ -157,7 +157,7 @@ export function registerRosterHandlers(): void {
       // possible vers cette interaction déjà close une fois le choix fait
       // (revue finale, constat I7) : le message doit donc couvrir les deux
       // issues plutôt que d'annoncer un DM comme s'il était garanti.
-      content: `Listing published to ${targets} server(s). Your dashboard will arrive by DM, or in a private thread in the LFG channel if your DMs are closed.`,
+      content: `Listing published to ${targets} server(s). Your dashboard will arrive by DM, or in a private thread in the LFM channel if your DMs are closed.`,
       embeds: [], components: [],
     })
   })

@@ -3,13 +3,13 @@
 Prérequis : deux serveurs de test (`ÉMETTEUR`, `RÉCEPTEUR`), le bot invité sur les deux.
 
 1. `/network invite` sur ÉMETTEUR (compte owner) → un code est renvoyé en éphémère.
-2. `/set-lfg-channel` avec ce code sur ÉMETTEUR → confirmation d'entrée dans le réseau.
+2. `/set-lfm-channel` avec ce code sur ÉMETTEUR → confirmation d'entrée dans le réseau.
 3. Répéter 1-2 sur RÉCEPTEUR avec un second code.
-4. Retirer au bot la permission « Envoyer des messages » sur le salon LFG de RÉCEPTEUR, puis `/set-lfg-channel` → le bot annonce la permission manquante. Rétablir.
+4. Retirer au bot la permission « Envoyer des messages » sur le salon LFM de RÉCEPTEUR, puis `/set-lfm-channel` → le bot annonce la permission manquante. Rétablir.
 5. `/recruit` sur ÉMETTEUR avec un membre **sans** le rôle recruteur → refus explicite.
 6. `/recruit` avec le rôle recruteur → le constructeur de roster s'affiche en éphémère.
 7. Ajouter deux places (dont deux fois la même spé), en retirer une, redémarrer le bot, rouvrir le message → l'état du brouillon est conservé.
-8. `[Publish LFG]` → l'annonce apparaît sur les deux serveurs, le dashboard arrive en DM.
+8. `[Publish LFM]` → l'annonce apparaît sur les deux serveurs, le dashboard arrive en DM.
 9. Fermer ses DM et republier une annonce → le dashboard bascule sur un thread privé.
 10. Cliquer `[⚔️ Apply]` avec une seule place ouverte → le modal s'ouvre directement.
 11. Soumettre un iLvl non numérique et un lien hors warcraftlogs → les deux erreurs sont listées ensemble.

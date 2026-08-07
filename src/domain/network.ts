@@ -67,7 +67,7 @@ export interface UpdateGuildParams {
   lfgChannelId?: string
   recruiterRoleIds?: string[]
   timezone?: string
-  // Rejouer /set-lfg-channel est le seul chemin de rattrapage pour un serveur
+  // Rejouer /set-lfm-channel est le seul chemin de rattrapage pour un serveur
   // inscrit avant la Tâche 18 : c'est ainsi qu'il obtient un nom affichable.
   name?: string
 }

@@ -43,7 +43,7 @@ export const networkCommand = {
         case 'invite': {
           const code = await createInviteCode(deps.db, interaction.user.id)
           await interaction.editReply(
-            `Invite code: \`${code}\`\nThe partner admin runs \`/set-lfg-channel code:${code} channel:#lfg roles:@RaidLead timezone:Europe/Paris\`.`,
+            `Invite code: \`${code}\`\nThe partner admin runs \`/set-lfm-channel code:${code} channel:#lfm role:@RaidLead timezone:Europe/Paris\`.`,
           )
           return
         }

@@ -100,7 +100,7 @@ function originGuildLine(originGuildName: string): string[] {
 export function renderPublicMessage(view: EventView, emojis: EmojiMap): MessagePayload {
   const { event, slots, originGuildName } = view
   const closed = CLOSED[event.status]
-  const title = `${closed ? `${closed} ` : ''}🚨 LFG - ${event.raidName} (${difficultyLabel(event.difficulty)})`
+  const title = `${closed ? `${closed} ` : ''}🚨 LFM - ${event.raidName} (${difficultyLabel(event.difficulty)})`
 
   // Agrégation par (classe, spé, statut) : le RL saisit une ligne par place,
   // le lecteur veut une ligne par besoin. Le nombre n'est affiché que si la

@@ -8,7 +8,7 @@
 
 ## 1. Objet
 
-PugStone est un bot Discord destiné aux communautés World of Warcraft. Il constitue un réseau LFG inter-serveurs fermé : un Raid Leader publie depuis son serveur une annonce détaillant les places manquantes de son roster, le bot la diffuse sur l'ensemble des serveurs partenaires, collecte les candidatures via des modals, et présente au Raid Leader un tableau de bord privé pour comparer les candidats et retenir le bon.
+PugStone est un bot Discord destiné aux communautés World of Warcraft. Il constitue un réseau LFM inter-serveurs fermé : un Raid Leader publie depuis son serveur une annonce détaillant les places manquantes de son roster, le bot la diffuse sur l'ensemble des serveurs partenaires, collecte les candidatures via des modals, et présente au Raid Leader un tableau de bord privé pour comparer les candidats et retenir le bon.
 
 Le bot ne gère pas la composition du raid en amont (rôle tenu par Raid-Helper ou équivalent) : il traite uniquement le comblement des trous.
 
@@ -64,7 +64,7 @@ src/
     client.ts              création du client, intents, connexion
     router.ts              aiguillage des interactions par custom_id
     gateway.ts             implémentation de DiscordGateway au-dessus de discord.js
-  commands/                /network, /set-lfg-channel, /recruit, /cancel
+  commands/                /network, /set-lfm-channel, /recruit, /cancel
   interactions/            handlers boutons / select menus / modals
   domain/                  services métier (aucun import discord.js)
     network.ts  events.ts  slots.ts  applications.ts
@@ -108,7 +108,7 @@ enum MessageKind     { PUBLIC  DASHBOARD }
 model Guild {
   id               String      @id @default(cuid())
   discordGuildId   String      @unique
-  lfgChannelId     String?                  // null tant que /set-lfg-channel n'a pas été fait
+  lfgChannelId     String?                  // null tant que /set-lfm-channel n'a pas été fait
   recruiterRoleIds String[]                 // rôles autorisés à /recruit
   timezone         String                   // IANA, ex. "Europe/Paris"
   status           GuildStatus @default(ACTIVE)
@@ -213,7 +213,7 @@ Trois propriétés en découlent :
 
 `/network invite` (réservée à l'owner du bot) génère un code à usage unique. `/network revoke <code>` l'invalide. `/network status` affiche l'état du réseau : serveurs actifs, serveurs en `NEEDS_ATTENTION` avec leur motif, lignes d'émission bloquées.
 
-L'admin d'un serveur exécute `/set-lfg-channel code:<code> channel:#lfg roles:@RaidLead timezone:Europe/Paris`. Le bot :
+L'admin d'un serveur exécute `/set-lfm-channel code:<code> channel:#lfm role:@RaidLead role2:@Officer timezone:Europe/Paris`. Le bot :
 
 1. valide le code dans une transaction avec verrou (`FOR UPDATE`) — refus si consommé, révoqué ou inexistant ;
 2. crée le `Guild` et marque le code consommé ;
@@ -230,13 +230,13 @@ Rejouer la commande **sans** code permet à l'admin de modifier le salon, les r�
 3. création d'un `Event` en `DRAFT` ;
 4. réponse **éphémère** contenant le constructeur de roster.
 
-Le constructeur comprend : un select menu de classe, un select menu de spécialisation dépendant de la classe choisie, un bouton `[+ Ajouter]`, la liste des places déjà définies avec un select `[Retirer]`, un champ de contact (pseudo Bnet/in-game) et le bouton `[Publish LFG]`. Chaque interaction persiste le brouillon en base et ré-édite le message éphémère : un rechargement de Discord ou un redémarrage du bot ne perd pas le travail en cours.
+Le constructeur comprend : un select menu de classe, un select menu de spécialisation dépendant de la classe choisie, un bouton `[+ Ajouter]`, la liste des places déjà définies avec un select `[Retirer]`, un champ de contact (pseudo Bnet/in-game) et le bouton `[Publish LFM]`. Chaque interaction persiste le brouillon en base et ré-édite le message éphémère : un rechargement de Discord ou un redémarrage du bot ne perd pas le travail en cours.
 
-`[Publish LFG]` refuse un roster vide et refuse la publication si aucun serveur partenaire n'est actif (l'annonce reste alors en `DRAFT`). Sinon, dans une seule transaction : passage en `PUBLISHED`, insertion d'une ligne `EventMessage` `PUBLIC` par serveur partenaire actif et d'une ligne `DASHBOARD`. Le worker prend le relais ; l'annonce apparaît sur le réseau en quelques secondes.
+`[Publish LFM]` refuse un roster vide et refuse la publication si aucun serveur partenaire n'est actif (l'annonce reste alors en `DRAFT`). Sinon, dans une seule transaction : passage en `PUBLISHED`, insertion d'une ligne `EventMessage` `PUBLIC` par serveur partenaire actif et d'une ligne `DASHBOARD`. Le worker prend le relais ; l'annonce apparaît sur le réseau en quelques secondes.
 
 ### 5.3 Embed public
 
-- **Titre** — `🚨 LFG - <Raid> (<Difficulté>)`, préfixé de `[COMPLETED]`, `[EXPIRED]` ou `[CANCELLED]` selon l'état.
+- **Titre** — `🚨 LFM - <Raid> (<Difficulté>)`, préfixé de `[COMPLETED]`, `[EXPIRED]` ou `[CANCELLED]` selon l'état.
 - **Corps** — heure sous forme de timestamp dynamique, contact du Raid Leader, serveur émetteur.
 - **Places** — une ligne par place : `🔸 <emoji classe> <Spé> (Open)` ou `✅ <emoji classe> <Spé> (Filled)`. Les places identiques sont agrégées.
 - **Composant** — bouton `[⚔️ Apply]`, désactivé dès que l'annonce n'est plus `PUBLISHED`.
@@ -266,7 +266,7 @@ Puis, en transaction : verrou sur le slot, refus si entre-temps il est `FILLED`,
 
 Un **message unique en DM**, ré-édité à chaque évolution. Il liste les places, et sous chacune les candidats au format `Pseudo-Royaume | iLvl: 626 | [Logs] | commentaire`, avec un select menu `Accepter…`. Un bouton `[Fermer l'annonce]` y figure également.
 
-Si le Raid Leader a fermé ses messages privés, l'envoi échoue : le bot crée alors un **thread privé** dans le salon LFG du serveur émetteur et l'y invite, en le signalant dans la réponse éphémère de publication.
+Si le Raid Leader a fermé ses messages privés, l'envoi échoue : le bot crée alors un **thread privé** dans le salon LFM du serveur émetteur et l'y invite, en le signalant dans la réponse éphémère de publication.
 
 ### 5.6 Acceptation
 
@@ -318,13 +318,13 @@ Traitement par lots, concurrence globale plafonnée à environ 5 requêtes simul
 | Situation | Comportement |
 |---|---|
 | Publication alors qu'aucun partenaire n'est actif | Refus éphémère, l'annonce reste en `DRAFT` |
-| Raid Leader avec DM fermés | Bascule sur un thread privé dans le salon LFG du serveur émetteur |
+| Raid Leader avec DM fermés | Bascule sur un thread privé dans le salon LFM du serveur émetteur |
 | Joueur accepté avec DM fermés | Le Raid Leader est prévenu sur son dashboard, avec la mention du joueur |
 | Candidat ayant quitté le serveur ou supprimé son compte | La candidature reste affichée, repli sur `applicantTag` |
 | Deux acceptations simultanées sur la même place | Verrou de ligne : la seconde reçoit un refus éphémère |
 | Redémarrage en plein fan-out | Le worker reprend seul : `syncedVersion < publicVersion` identifie le travail restant |
 | Annonce créée pour une heure déjà passée | Refus à la validation de `/recruit` |
-| Salon LFG supprimé après configuration | Détecté à la première diffusion → `NEEDS_ATTENTION` + notification de l'admin |
+| Salon LFM supprimé après configuration | Détecté à la première diffusion → `NEEDS_ATTENTION` + notification de l'admin |
 | Liste de candidats dépassant les limites Discord | Troncature explicite (25 options de select, 6000 caractères d'embed) avec mention du nombre masqué |
 
 ### Observabilité et rétention

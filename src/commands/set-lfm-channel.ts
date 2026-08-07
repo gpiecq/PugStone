@@ -4,12 +4,12 @@ import { checkChannelPermissions } from '../bot/permissions.js'
 import { redeemInviteCode, updateGuildConfig } from '../domain/network.js'
 import { DomainError } from '../domain/errors.js'
 
-export const setLfgChannelCommand = {
+export const setLfmChannelCommand = {
   data: new SlashCommandBuilder()
-    .setName('set-lfg-channel')
+    .setName('set-lfm-channel')
     .setDescription('Join the PugStone network or update this server configuration')
     .setDefaultMemberPermissions(0) // administrateurs uniquement, par défaut Discord
-    .addChannelOption((o) => o.setName('channel').setDescription('Channel receiving LFG listings')
+    .addChannelOption((o) => o.setName('channel').setDescription('Channel receiving LFM listings')
       .addChannelTypes(ChannelType.GuildText).setRequired(true))
     .addRoleOption((o) => o.setName('roles').setDescription('Role allowed to post listings').setRequired(true))
     .addStringOption((o) => o.setName('timezone').setDescription('IANA timezone, e.g. Europe/Paris').setRequired(true))

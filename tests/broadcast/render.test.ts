@@ -29,7 +29,7 @@ describe('embed public', () => {
   it('affiche le titre, un timestamp dynamique et les places ouvertes', () => {
     const payload = renderPublicMessage(view({}, [{}]), emojis)
     const embed = payload.embeds[0] as { title: string; description: string }
-    expect(embed.title).toBe('🚨 LFG - Nerub-ar Palace (Heroic)')
+    expect(embed.title).toBe('🚨 LFM - Nerub-ar Palace (Heroic)')
     expect(embed.description).toContain('<t:1788289200:F>') // instant du raid en secondes
     expect(embed.description).toContain('🔸 <:mage:1> Arcane (Open)')
   })

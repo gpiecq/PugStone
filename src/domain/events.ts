@@ -78,7 +78,7 @@ export async function bumpVersions(tx: Db, eventId: string, options: { public: b
 export async function publishEvent(db: Db, eventId: string): Promise<{ targets: number }> {
   return db.$transaction(async (tx) => {
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, include: { originGuild: true } })
-    // Un double-clic sur [Publish LFG] republiait sinon une annonce déjà
+    // Un double-clic sur [Publish LFM] republiait sinon une annonce déjà
     // PUBLISHED : le createMany suivant heurtait la contrainte unique
     // d'EventMessage et remontait une P2002 brute (revue finale, constat I9).
     if (event.status !== 'DRAFT') throw new EventClosed()

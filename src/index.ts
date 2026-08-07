@@ -21,7 +21,7 @@ import { expireDueEvents } from './scheduler/expiration.js'
 import { purgeOldEvents } from './scheduler/retention.js'
 import { suspendGuild } from './domain/network.js'
 import { networkCommand } from './commands/network.js'
-import { setLfgChannelCommand } from './commands/set-lfg-channel.js'
+import { setLfmChannelCommand } from './commands/set-lfm-channel.js'
 import { recruitCommand } from './commands/recruit.js'
 import { cancelCommand } from './commands/cancel.js'
 import { DomainError } from './domain/errors.js'
@@ -44,7 +44,7 @@ export function startLoop(name: string, intervalMs: number, task: () => Promise<
 }
 
 async function main(): Promise<void> {
-  const commands: CommandModule[] = [networkCommand, setLfgChannelCommand, recruitCommand, cancelCommand]
+  const commands: CommandModule[] = [networkCommand, setLfmChannelCommand, recruitCommand, cancelCommand]
   const client = createClient()
   const deps: BotDeps = {
     db: prisma,

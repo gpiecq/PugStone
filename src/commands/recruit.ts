@@ -13,7 +13,7 @@ import { DomainError } from '../domain/errors.js'
 export const recruitCommand = {
   data: new SlashCommandBuilder()
     .setName('recruit')
-    .setDescription('Create a cross-server LFG listing')
+    .setDescription('Create a cross-server LFM listing')
     .addStringOption((o) => o.setName('raid').setDescription('Raid name').setRequired(true))
     .addStringOption((o) => o.setName('difficulty').setDescription('Difficulty').setRequired(true)
       .addChoices({ name: 'Normal', value: 'NORMAL' }, { name: 'Heroic', value: 'HEROIC' }, { name: 'Mythic', value: 'MYTHIC' }))

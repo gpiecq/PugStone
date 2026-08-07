@@ -105,13 +105,13 @@ async function claimPending(db: Db, now: Date, limit: number): Promise<Pending[]
  * déclenché l'alerte.
  */
 async function notifyGuildNeedsAttention(deps: OutboxDeps, guild: Guild, reason: string): Promise<void> {
-  const channelMention = guild.lfgChannelId ? `<#${guild.lfgChannelId}>` : 'your configured LFG channel'
+  const channelMention = guild.lfgChannelId ? `<#${guild.lfgChannelId}>` : 'your configured LFM channel'
   try {
     const ownerId = await deps.gateway.fetchGuildOwnerId(guild.discordGuildId)
     await deps.gateway.sendDM(ownerId, {
       content:
         `PugStone lost access to ${channelMention} and has stopped posting raid listings there: ${reason}. ` +
-        'To fix it: restore the bot\'s permissions on that channel (or pick a new one), then run `/set-lfg-channel` again to resume.',
+        'To fix it: restore the bot\'s permissions on that channel (or pick a new one), then run `/set-lfm-channel` again to resume.',
       embeds: [],
       components: [],
     })
