@@ -4,13 +4,16 @@ export function discordError(code: number): Error & { code: number } {
   return Object.assign(new Error(`Discord error ${code}`), { code })
 }
 
-export type GatewayMethod = 'sendMessage' | 'editMessage' | 'sendDM' | 'createPrivateThread'
+export type GatewayMethod = 'sendMessage' | 'editMessage' | 'sendDM' | 'createPrivateThread' | 'fetchGuildOwnerId'
 
 export class FakeGateway implements DiscordGateway {
   sent: { channelId: string; messageId: string; payload: MessagePayload }[] = []
   edited: { channelId: string; messageId: string; payload: MessagePayload }[] = []
   dms: { userId: string; payload: MessagePayload }[] = []
   threads: { channelId: string; name: string; inviteUserId: string }[] = []
+  guildOwnerFetches: string[] = []
+  /** Permet à un test de fixer l'owner d'une guilde précise ; sinon un id déterministe `owner-<discordGuildId>`. */
+  guildOwners: Record<string, string> = {}
 
   private queued: unknown[] = []
   private permanent: unknown
@@ -69,5 +72,11 @@ export class FakeGateway implements DiscordGateway {
     this.check('createPrivateThread')
     this.threads.push({ channelId, name, inviteUserId })
     return { channelId: `thread-${channelId}` }
+  }
+
+  async fetchGuildOwnerId(discordGuildId: string) {
+    this.check('fetchGuildOwnerId')
+    this.guildOwnerFetches.push(discordGuildId)
+    return this.guildOwners[discordGuildId] ?? `owner-${discordGuildId}`
   }
 }

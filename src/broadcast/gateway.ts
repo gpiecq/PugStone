@@ -9,6 +9,10 @@ export interface DiscordGateway {
   editMessage(channelId: string, messageId: string, payload: MessagePayload): Promise<void>
   sendDM(userId: string, payload: MessagePayload): Promise<{ channelId: string; messageId: string }>
   createPrivateThread(channelId: string, name: string, inviteUserId: string): Promise<{ channelId: string }>
+  // Tâche 19 : nécessaire pour notifier par DM le propriétaire d'un serveur
+  // partenaire dont la cible de diffusion est cassée — le salon LFG est
+  // précisément ce qui ne fonctionne plus, y écrire n'a pas de sens.
+  fetchGuildOwnerId(discordGuildId: string): Promise<string>
 }
 
 export type FailureKind = 'TRANSIENT' | 'TARGET_UNUSABLE' | 'MESSAGE_GONE'

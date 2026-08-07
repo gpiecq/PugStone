@@ -5,10 +5,11 @@ import { classifyDiscordError } from '../../src/broadcast/gateway.js'
 // Double minimal d'un Client discord.js : seules les méthodes effectivement
 // utilisées par DiscordJsGateway sont mockées, castées via `as never` comme
 // le reste des doubles de test du projet (voir tests/bot/router.test.ts).
-function fakeClient(overrides: { channel?: unknown; user?: unknown } = {}) {
+function fakeClient(overrides: { channel?: unknown; user?: unknown; guild?: unknown } = {}) {
   return {
     channels: { fetch: vi.fn().mockResolvedValue(overrides.channel ?? null) },
     users: { fetch: vi.fn().mockResolvedValue(overrides.user) },
+    guilds: { fetch: vi.fn().mockResolvedValue(overrides.guild) },
   }
 }
 
@@ -79,5 +80,29 @@ describe('DiscordJsGateway', () => {
 
     expect(result).toEqual({ channelId: 'thread1' })
     expect(thread.members.add).toHaveBeenCalledWith('u1')
+  })
+
+  it("récupère l'identifiant du propriétaire d'un serveur (Tâche 19)", async () => {
+    const guild = { fetchOwner: vi.fn().mockResolvedValue({ id: 'owner1' }) }
+    const gateway = new DiscordJsGateway(fakeClient({ guild }) as never)
+
+    const ownerId = await gateway.fetchGuildOwnerId('g1')
+
+    expect(ownerId).toBe('owner1')
+  })
+
+  it('lève une erreur de code 10003 quand le serveur est introuvable', async () => {
+    const client = fakeClient()
+    client.guilds.fetch = vi.fn().mockRejectedValue(new Error('unknown guild'))
+    const gateway = new DiscordJsGateway(client as never)
+
+    await expect(gateway.fetchGuildOwnerId('missing')).rejects.toMatchObject({ code: 10003 })
+  })
+
+  it("lève une erreur de code 10003 quand le propriétaire du serveur n'est pas résoluble", async () => {
+    const guild = { fetchOwner: vi.fn().mockRejectedValue(new Error('unknown member')) }
+    const gateway = new DiscordJsGateway(fakeClient({ guild }) as never)
+
+    await expect(gateway.fetchGuildOwnerId('g1')).rejects.toMatchObject({ code: 10003 })
   })
 })

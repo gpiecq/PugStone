@@ -15,7 +15,7 @@ const emojis = { MAGE: '<:mage:1>' }
 // horloge réelle (marge large pour couvrir toute la durée de la suite), sans
 // quoi aucune ligne fraîche ne serait jamais éligible au premier tick.
 let clock = new Date(Date.now() + 24 * 60 * 60 * 1000)
-const deps = (gateway: FakeGateway) => ({ db: testDb, gateway, emojis, now: () => clock })
+const deps = (gateway: FakeGateway) => ({ db: testDb, gateway, emojis, now: () => clock, ownerId: 'bot-owner' })
 
 async function publishedEvent() {
   const origin = await makeGuild(testDb, { discordGuildId: 'origin' })
@@ -24,6 +24,23 @@ async function publishedEvent() {
   await addSlot(testDb, draft.id, { className: 'MAGE', specName: 'ARCANE' })
   await publishEvent(testDb, draft.id)
   return draft
+}
+
+// Une seule ligne PUBLIC, sans ligne DASHBOARD : évite toute interférence
+// entre les appels `sendDM` du dashboard (Raid Leader) et ceux des
+// notifications de la Tâche 19, qui partagent la même file de FakeGateway.
+async function publicOnlyMessage(guildId: string, channelId: string) {
+  const origin = await makeGuild(testDb)
+  const event = await testDb.event.create({
+    data: {
+      originGuildId: origin.id, authorId: 'author', authorContact: 'RaidLead#0001',
+      raidName: 'Liberation of Undermine', difficulty: 'HEROIC',
+      scheduledAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      status: 'PUBLISHED', publicVersion: 1,
+    },
+  })
+  await testDb.eventMessage.create({ data: { eventId: event.id, guildId, channelId, kind: 'PUBLIC' } })
+  return event
 }
 
 describe('publication initiale', () => {
@@ -163,6 +180,111 @@ describe('échecs', () => {
     const row = await testDb.eventMessage.findFirstOrThrow({ where: { kind: 'DASHBOARD' } })
     expect(row.channelId).toBe('thread-chan')
     expect(row.messageId).not.toBeNull()
+  })
+})
+
+describe('notifications d\'échec (Tâche 19)', () => {
+  it('un échec 50013 notifie le propriétaire du serveur partenaire et l\'owner du bot', async () => {
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    await publicOnlyMessage('partner', 'partner-chan')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', discordError(50013))
+    await runOutboxTick(deps(gateway))
+
+    expect(gateway.dms.filter((d) => d.userId === 'owner-partner')).toHaveLength(1)
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(1)
+    const guild = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'partner' } })
+    expect(guild.status).toBe('NEEDS_ATTENTION')
+  })
+
+  it('ne notifie pas de nouveau un serveur déjà NEEDS_ATTENTION (anti-spam entre ticks)', async () => {
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    await publicOnlyMessage('partner', 'partner-chan')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', discordError(50013))
+    await runOutboxTick(deps(gateway))
+
+    // Une seconde annonce, publiée directement en base (le fan-out normal
+    // exclurait désormais ce serveur, plus ACTIVE) : simule un second échec
+    // touchant un serveur déjà marqué.
+    await publicOnlyMessage('partner', 'partner-chan')
+    gateway.failNextOn('sendMessage', discordError(50013))
+    await runOutboxTick(deps(gateway))
+
+    expect(gateway.dms.filter((d) => d.userId === 'owner-partner')).toHaveLength(1)
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(1)
+  })
+
+  it('ne notifie qu\'une fois pour deux lignes du même serveur traitées dans le même tick', async () => {
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    await publicOnlyMessage('partner', 'partner-chan')
+    await publicOnlyMessage('partner', 'partner-chan')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', discordError(50013), discordError(50013))
+    await runOutboxTick(deps(gateway))
+
+    expect(gateway.dms.filter((d) => d.userId === 'owner-partner')).toHaveLength(1)
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(1)
+    const rows = await testDb.eventMessage.findMany({ where: { guildId: 'partner' } })
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.disabled)).toBe(true)
+  })
+
+  it('notifie l\'owner du bot pour chaque ligne abandonnée après MAX_ATTEMPTS', async () => {
+    // Deux lignes PUBLIC, sans DASHBOARD : `failAlways` ferait aussi échouer
+    // les DM de notification eux-mêmes (même gateway, aucune distinction de
+    // méthode), rendant le scénario invérifiable. On cible donc précisément
+    // les MAX_ATTEMPTS échecs de `sendMessage` par ligne dont ce test a besoin,
+    // en laissant `sendDM` (celui des notifications) libre de réussir.
+    await publicOnlyMessage('guildA', 'chanA')
+    await publicOnlyMessage('guildB', 'chanB')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', ...Array(2 * MAX_ATTEMPTS).fill(discordError(500)))
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      await runOutboxTick(deps(gateway))
+      clock = new Date(clock.getTime() + 60 * 60 * 1000)
+    }
+    const rows = await testDb.eventMessage.findMany({})
+    expect(rows).toHaveLength(2)
+    expect(rows.every((r) => r.disabled)).toBe(true)
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(2)
+  })
+
+  it('un échec de sendDM pendant la notification n\'empêche pas le traitement du tick', async () => {
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    const event = await publicOnlyMessage('partner', 'partner-chan')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', discordError(50013))
+    gateway.failNextOn('sendDM', discordError(500), discordError(500))
+
+    const result = await runOutboxTick(deps(gateway))
+
+    expect(result.failed).toBe(1)
+    const row = await testDb.eventMessage.findFirstOrThrow({ where: { eventId: event.id } })
+    expect(row.disabled).toBe(true)
+    const guild = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'partner' } })
+    expect(guild.status).toBe('NEEDS_ATTENTION')
+  })
+
+  it('un échec de fetchGuildOwnerId est traité comme les autres : l\'owner du bot est tout de même prévenu', async () => {
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    await publicOnlyMessage('partner', 'partner-chan')
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendMessage', discordError(50013))
+    gateway.failNextOn('fetchGuildOwnerId', discordError(500))
+
+    await expect(runOutboxTick(deps(gateway))).resolves.toEqual({ processed: 0, failed: 1 })
+
+    expect(gateway.dms.filter((d) => d.userId === 'owner-partner')).toHaveLength(0)
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(1)
+  })
+
+  it('un tick nominal sans échec n\'envoie aucune notification (non-régression)', async () => {
+    await publishedEvent()
+    const gateway = new FakeGateway()
+    await runOutboxTick(deps(gateway))
+
+    expect(gateway.dms.some((d) => d.userId === 'bot-owner' || d.userId.startsWith('owner-'))).toBe(false)
   })
 })
 

@@ -94,7 +94,7 @@ async function main(): Promise<void> {
   logger.info('client Discord connecté')
 
   const loops = [
-    startLoop('outbox', 3_000, () => runOutboxTick({ db: prisma, gateway: deps.gateway, emojis: deps.emojis, now: () => new Date() })),
+    startLoop('outbox', 3_000, () => runOutboxTick({ db: prisma, gateway: deps.gateway, emojis: deps.emojis, now: () => new Date(), ownerId: deps.ownerId })),
     startLoop('expiration', 60_000, () => expireDueEvents(prisma, new Date())),
     startLoop('retention', 24 * 60 * 60 * 1000, () => purgeOldEvents(prisma, new Date())),
   ]

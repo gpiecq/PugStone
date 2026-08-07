@@ -106,6 +106,23 @@ describe('cibles de diffusion', () => {
   })
 })
 
+describe('mise à l\'écart d\'un serveur (Tâche 19)', () => {
+  it('rend true sur la transition et false si déjà NEEDS_ATTENTION (écriture conditionnelle, anti-spam)', async () => {
+    const code = await createInviteCode(testDb, 'owner')
+    const guild = await redeemInviteCode(testDb, config(code, 'gZ'))
+
+    const first = await markGuildNeedsAttention(testDb, guild.id, 'salon supprimé')
+    const second = await markGuildNeedsAttention(testDb, guild.id, 'toujours cassé')
+
+    expect(first).toBe(true)
+    expect(second).toBe(false)
+    const updated = await testDb.guild.findUniqueOrThrow({ where: { id: guild.id } })
+    expect(updated.status).toBe('NEEDS_ATTENTION')
+    // Le premier appel a posé la raison ; le second, sans effet, ne l'écrase pas.
+    expect(updated.statusReason).toBe('salon supprimé')
+  })
+})
+
 describe('suspension d\'un serveur', () => {
   it('suspend le serveur et coupe l\'émission de ses messages sans toucher aux autres', async () => {
     const codeX = await createInviteCode(testDb, 'owner')

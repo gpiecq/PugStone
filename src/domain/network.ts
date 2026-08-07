@@ -94,11 +94,24 @@ export function listActiveGuilds(db: Db): Promise<Guild[]> {
   })
 }
 
-export async function markGuildNeedsAttention(db: Db, guildId: string, reason: string): Promise<void> {
-  await db.guild.update({
-    where: { id: guildId },
+/**
+ * Écriture conditionnelle plutôt que lecture puis écriture : le prédicat
+ * `status: { not: 'NEEDS_ATTENTION' }` fait partie du WHERE de l'UPDATE, donc
+ * évalué et appliqué atomiquement par Postgres. Deux appels concurrents sur
+ * le même `guildId` (Tâche 19 : deux lignes d'émission d'un même serveur en
+ * échec dans le même tick) se sérialisent sur le verrou de ligne : le premier
+ * commit la transition et renvoie `true`, le second relit alors un statut déjà
+ * `NEEDS_ATTENTION` et renvoie `false` — sans jamais qu'une lecture séparée de
+ * l'écriture laisse passer une fenêtre de course. Le booléen retourné indique
+ * si *cet appel* a fait basculer l'état, ce qui permet à l'appelant de ne
+ * notifier que sur transition, jamais sur chaque occurrence.
+ */
+export async function markGuildNeedsAttention(db: Db, guildId: string, reason: string): Promise<boolean> {
+  const result = await db.guild.updateMany({
+    where: { id: guildId, status: { not: 'NEEDS_ATTENTION' } },
     data: { status: 'NEEDS_ATTENTION', statusReason: reason },
   })
+  return result.count > 0
 }
 
 export async function suspendGuild(db: Db, discordGuildId: string): Promise<void> {

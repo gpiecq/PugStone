@@ -12,13 +12,14 @@
 //  - convergence : un serveur injoignable rattrape son retard tout seul au
 //    prochain tick où sa cible redevient valide, sans intervention humaine.
 import pLimit from 'p-limit'
-import type { EventMessage } from '@prisma/client'
+import type { EventMessage, Guild } from '@prisma/client'
 import type { Db } from '../db/client.js'
 import type { EmojiMap } from '../config/emojis.js'
 import { classifyDiscordError, type DiscordGateway, type MessagePayload } from './gateway.js'
 import { renderDashboardMessage, renderPublicMessage } from './render.js'
 import { loadEventView } from '../domain/events.js'
 import { markGuildNeedsAttention } from '../domain/network.js'
+import { logger } from '../logger.js'
 
 export const MAX_ATTEMPTS = 8
 const BASE_DELAY_MS = 5_000
@@ -35,6 +36,9 @@ export interface OutboxDeps {
   emojis: EmojiMap
   now: () => Date
   concurrency?: number
+  // Tâche 19 : destinataire des alertes factuelles (mise à l'écart d'un
+  // serveur, abandon d'une émission) — jamais du salon LFG cassé lui-même.
+  ownerId: string
 }
 
 /**
@@ -91,6 +95,56 @@ async function claimPending(db: Db, now: Date, limit: number): Promise<Pending[]
   })
 }
 
+/**
+ * Alerte le propriétaire du serveur partenaire (par DM — le salon LFG est
+ * précisément ce qui est cassé, y écrire n'a pas de sens) puis l'owner du bot.
+ * Les deux envois sont indépendants et chacun protégé : le motif de
+ * `notifyAccepted` (src/interactions/dashboard.ts) veut qu'une notification
+ * qui échoue ne fasse jamais échouer autre chose — ici, ni l'autre
+ * notification, ni a fortiori le traitement de la ligne d'émission qui a
+ * déclenché l'alerte.
+ */
+async function notifyGuildNeedsAttention(deps: OutboxDeps, guild: Guild, reason: string): Promise<void> {
+  const channelMention = guild.lfgChannelId ? `<#${guild.lfgChannelId}>` : 'your configured LFG channel'
+  try {
+    const ownerId = await deps.gateway.fetchGuildOwnerId(guild.discordGuildId)
+    await deps.gateway.sendDM(ownerId, {
+      content:
+        `PugStone lost access to ${channelMention} and has stopped posting raid listings there: ${reason}. ` +
+        'To fix it: restore the bot\'s permissions on that channel (or pick a new one), then run `/set-lfg-channel` again to resume.',
+      embeds: [],
+      components: [],
+    })
+  } catch (error) {
+    logger.warn({ err: error, guildId: guild.discordGuildId }, 'notification au propriétaire du serveur partenaire impossible')
+  }
+
+  try {
+    await deps.gateway.sendDM(deps.ownerId, {
+      content: `Guild ${guild.discordGuildId} was flagged NEEDS_ATTENTION and removed from broadcasting: ${reason}`,
+      embeds: [],
+      components: [],
+    })
+  } catch (error) {
+    logger.warn({ err: error, guildId: guild.discordGuildId }, 'notification à l\'owner du bot impossible')
+  }
+}
+
+/** Même garantie que `notifyGuildNeedsAttention` : ne doit jamais faire échouer le worker. */
+async function notifyOutboxAbandoned(deps: OutboxDeps, row: Pending, reason: string): Promise<void> {
+  try {
+    await deps.gateway.sendDM(deps.ownerId, {
+      content:
+        `Broadcast permanently abandoned after ${MAX_ATTEMPTS} attempts (guild ${row.guildId}, ` +
+        `${row.kind === 'PUBLIC' ? 'public listing' : 'dashboard'}): ${reason}`,
+      embeds: [],
+      components: [],
+    })
+  } catch (error) {
+    logger.warn({ err: error, guildId: row.guildId, eventMessageId: row.id }, 'notification d\'abandon à l\'owner du bot impossible')
+  }
+}
+
 async function handleFailure(deps: OutboxDeps, row: Pending, error: unknown): Promise<void> {
   const kind = classifyDiscordError(error)
   const message = error instanceof Error ? error.message : String(error)
@@ -105,20 +159,30 @@ async function handleFailure(deps: OutboxDeps, row: Pending, error: unknown): Pr
     // EventMessage.guildId porte le discordGuildId, alors que
     // markGuildNeedsAttention attend l'identifiant interne du Guild.
     const guild = await deps.db.guild.findUnique({ where: { discordGuildId: row.guildId } })
-    if (guild) await markGuildNeedsAttention(deps.db, guild.id, message)
+    if (guild) {
+      // Notifie seulement sur transition d'état (écriture conditionnelle dans
+      // markGuildNeedsAttention) : sinon chaque ligne en échec d'un même
+      // serveur redéclencherait une alerte, en rafale, pour rien de nouveau.
+      const changed = await markGuildNeedsAttention(deps.db, guild.id, message)
+      if (changed) await notifyGuildNeedsAttention(deps, guild, message)
+    }
     return
   }
 
   const attempts = row.attempts + 1
+  const abandoned = attempts >= MAX_ATTEMPTS
   await deps.db.eventMessage.update({
     where: { id: row.id },
     data: {
       attempts,
       lastError: message,
-      disabled: attempts >= MAX_ATTEMPTS,
+      disabled: abandoned,
       nextAttemptAt: new Date(deps.now().getTime() + backoffDelayMs(attempts)),
     },
   })
+  // Borné naturellement : une ligne abandonnée passe `disabled = true` et
+  // n'est plus jamais retentée, donc cette notification part au plus une fois.
+  if (abandoned) await notifyOutboxAbandoned(deps, row, message)
 }
 
 interface Delivered {
