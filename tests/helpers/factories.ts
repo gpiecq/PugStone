@@ -4,13 +4,16 @@
 
 import type { Db } from '../../src/db/client.js'
 
-export async function makeGuild(db: Db, overrides: Partial<{ discordGuildId: string; lfgChannelId: string | null }> = {}) {
+export async function makeGuild(db: Db, overrides: Partial<{ discordGuildId: string; lfgChannelId: string | null; name: string }> = {}) {
   return db.guild.create({
     data: {
       discordGuildId: overrides.discordGuildId ?? `g${Math.random().toString(36).slice(2, 8)}`,
       lfgChannelId: overrides.lfgChannelId === undefined ? 'chan' : overrides.lfgChannelId,
       recruiterRoleIds: ['role-rl'],
       timezone: 'Europe/Paris',
+      // Non renseigné par défaut : les tests qui ne portent pas sur le nom du
+      // serveur émetteur laissent Prisma appliquer le défaut `""` du schéma.
+      ...(overrides.name !== undefined ? { name: overrides.name } : {}),
     },
   })
 }

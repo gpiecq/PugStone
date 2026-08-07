@@ -29,6 +29,9 @@ export interface RedeemParams {
   lfgChannelId: string
   recruiterRoleIds: string[]
   timezone: string
+  // Nom affiché aux autres serveurs du réseau (Tâche 18). Optionnel : le
+  // schéma retombe sur `""` si l'appelant ne le transmet pas.
+  name?: string
 }
 
 export async function redeemInviteCode(db: Db, params: RedeemParams): Promise<Guild> {
@@ -47,6 +50,7 @@ export async function redeemInviteCode(db: Db, params: RedeemParams): Promise<Gu
         lfgChannelId: params.lfgChannelId,
         recruiterRoleIds: params.recruiterRoleIds,
         timezone: params.timezone,
+        name: params.name ?? '',
         status: 'ACTIVE',
       },
     })
@@ -63,6 +67,9 @@ export interface UpdateGuildParams {
   lfgChannelId?: string
   recruiterRoleIds?: string[]
   timezone?: string
+  // Rejouer /set-lfg-channel est le seul chemin de rattrapage pour un serveur
+  // inscrit avant la Tâche 18 : c'est ainsi qu'il obtient un nom affichable.
+  name?: string
 }
 
 export async function updateGuildConfig(db: Db, params: UpdateGuildParams): Promise<Guild> {

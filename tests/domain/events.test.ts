@@ -194,4 +194,11 @@ describe('loadEventView', () => {
     expect(view.slots).toHaveLength(1)
     expect(view.slots[0]!.applications).toHaveLength(1)
   })
+
+  it('remonte le nom du serveur émetteur', async () => {
+    const guild = await makeGuild(testDb, { name: 'Horde Raiders EU' })
+    const draft = await makeDraft(testDb, guild.id)
+    const view = await loadEventView(testDb, draft.id)
+    expect(view.originGuildName).toBe('Horde Raiders EU')
+  })
 })

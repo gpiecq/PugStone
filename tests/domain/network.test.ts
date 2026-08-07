@@ -48,6 +48,19 @@ describe('admission au réseau', () => {
     expect(await testDb.guild.count()).toBe(1)
   })
 
+  it('enregistre le nom du serveur transmis à l\'inscription', async () => {
+    const code = await createInviteCode(testDb, 'owner')
+    const guild = await redeemInviteCode(testDb, { ...config(code), name: 'Horde Raiders EU' })
+    expect(guild.name).toBe('Horde Raiders EU')
+  })
+
+  it('met à jour le nom du serveur lors d\'une reconfiguration', async () => {
+    const code = await createInviteCode(testDb, 'owner')
+    await redeemInviteCode(testDb, config(code))
+    const updated = await updateGuildConfig(testDb, { discordGuildId: 'g1', name: 'Alliance Raiders EU' })
+    expect(updated.name).toBe('Alliance Raiders EU')
+  })
+
   it('permet de reconfigurer un serveur sans nouveau code', async () => {
     const code = await createInviteCode(testDb, 'owner')
     await redeemInviteCode(testDb, config(code))

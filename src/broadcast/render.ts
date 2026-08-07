@@ -18,6 +18,11 @@ export const MAX_DASHBOARD_SELECT_ROWS = 4
 // dépasser cette taille (ex. plusieurs places à 25 candidats chacune) fait
 // rejeter tout le message (50035), pas seulement la partie en trop.
 export const MAX_EMBED_DESCRIPTION_LENGTH = 4096
+// Le nom du serveur émetteur est saisi par l'admin d'un serveur partenaire,
+// donc non maîtrisé par nous : borner sa longueur affichée garantit que cet
+// ajout à `renderPublicMessage` reste une source bornée, comme le reste de
+// l'embed public (revue finale, esprit du constat C1).
+export const MAX_ORIGIN_GUILD_NAME_LENGTH = 100
 
 const CLOSED: Record<string, string> = { COMPLETED: '[COMPLETED]', EXPIRED: '[EXPIRED]', CANCELLED: '[CANCELLED]' }
 const DIFFICULTY_LABEL: Record<string, string> = { NORMAL: 'Normal', HEROIC: 'Heroic', MYTHIC: 'Mythic' }
@@ -76,8 +81,24 @@ function boundDescription(sections: string[]): string {
   return `${full.slice(0, budget)}${suffix}`
 }
 
+/**
+ * Ligne « serveur émetteur » du corps de l'embed public (Tâche 18, spec
+ * §5.3) : sur un réseau où toutes les annonces arrivent dans le même salon,
+ * c'est ce qui permet au lecteur de juger la provenance. Le nom est tronqué
+ * avant échappement — jamais après — pour que la longueur affichée reste
+ * bornée par `MAX_ORIGIN_GUILD_NAME_LENGTH` même si l'échappement ajoute des
+ * antislashs. Un serveur inscrit avant cette migration n'a pas de nom
+ * (`""` par défaut en base) : on omet alors la ligne entière plutôt que
+ * d'afficher un libellé « Server: » orphelin.
+ */
+function originGuildLine(originGuildName: string): string[] {
+  const truncated = originGuildName.slice(0, MAX_ORIGIN_GUILD_NAME_LENGTH)
+  if (truncated.length === 0) return []
+  return [`🌐 Server: ${escapeMarkdown(truncated)}`]
+}
+
 export function renderPublicMessage(view: EventView, emojis: EmojiMap): MessagePayload {
-  const { event, slots } = view
+  const { event, slots, originGuildName } = view
   const closed = CLOSED[event.status]
   const title = `${closed ? `${closed} ` : ''}🚨 LFG - ${event.raidName} (${difficultyLabel(event.difficulty)})`
 
@@ -112,6 +133,7 @@ export function renderPublicMessage(view: EventView, emojis: EmojiMap): MessageP
     embeds: [{
       title,
       description: [
+        ...originGuildLine(originGuildName),
         `🕒 ${discordTimestamp(event.scheduledAt)}`,
         `👤 Contact: ${event.authorContact}`,
         '',

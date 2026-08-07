@@ -13,6 +13,11 @@ import { EmptyRoster, EventClosed, NoActivePartners, NotAuthorized, RaidTimeInva
 export interface EventView {
   event: Event
   slots: (Slot & { applications: Application[] })[]
+  // Nom du serveur émetteur (Tâche 18), pas la relation `originGuild`
+  // complète : c'est la seule information dont `renderPublicMessage` a
+  // besoin, et exposer moins évite un couplage inutile côté rendu. Peut être
+  // vide pour un serveur inscrit avant l'ajout de `Guild.name`.
+  originGuildName: string
 }
 
 export interface CreateDraftParams {
@@ -122,11 +127,18 @@ export async function cancelEvent(db: Db, eventId: string, actorId: string): Pro
 }
 
 export async function loadEventView(db: Db, eventId: string): Promise<EventView> {
-  const event = await db.event.findUniqueOrThrow({ where: { id: eventId } })
+  // `originGuild` n'est chargée que pour son nom (`select`), au même endroit
+  // que la requête sur `Event` : pas de second aller-retour base pour cette
+  // seule information, comme le fait déjà `publishEvent` pour la relation
+  // complète.
+  const { originGuild, ...event } = await db.event.findUniqueOrThrow({
+    where: { id: eventId },
+    include: { originGuild: { select: { name: true } } },
+  })
   const slots = await db.slot.findMany({
     where: { eventId },
     orderBy: { position: 'asc' },
     include: { applications: { where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } } },
   })
-  return { event, slots }
+  return { event, slots, originGuildName: originGuild.name }
 }

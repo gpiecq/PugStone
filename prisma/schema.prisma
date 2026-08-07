@@ -51,6 +51,11 @@ enum MessageKind {
 model Guild {
   id               String      @id @default(cuid())
   discordGuildId   String      @unique
+  // Nom affiché aux autres serveurs du réseau dans l'embed public (Tâche 18).
+  // Vide par défaut : les serveurs inscrits avant cette migration n'ont pas
+  // de nom tant qu'ils n'ont pas rejoué /set-lfg-channel — le rendu doit
+  // omettre la ligne plutôt qu'afficher un nom vide (voir render.ts).
+  name             String      @default("")
   lfgChannelId     String?
   recruiterRoleIds String[]
   timezone         String

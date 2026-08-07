@@ -4,7 +4,11 @@ import type { EventView } from '../../src/domain/events.js'
 
 const emojis = { MAGE: '<:mage:1>', PALADIN: '<:pala:2>' }
 
-function view(overrides: Partial<EventView['event']> = {}, slots: Partial<EventView['slots'][number]>[] = []): EventView {
+function view(
+  overrides: Partial<EventView['event']> = {},
+  slots: Partial<EventView['slots'][number]>[] = [],
+  originGuildName = '',
+): EventView {
   return {
     event: {
       id: 'e1', originGuildId: 'g1', authorId: 'rl', authorContact: 'RL#1',
@@ -17,6 +21,7 @@ function view(overrides: Partial<EventView['event']> = {}, slots: Partial<EventV
       id: `s${i}`, eventId: 'e1', className: 'MAGE', specName: 'ARCANE', role: 'DPS',
       status: 'OPEN', acceptedApplicationId: null, position: i, applications: [], ...s,
     })) as EventView['slots'],
+    originGuildName,
   }
 }
 
@@ -58,6 +63,36 @@ describe('embed public', () => {
     expect(embed.description).toContain('**Looking for:**')
     expect(embed.description.length).toBeGreaterThan(0)
     expect(embed.description).toContain('No spots configured yet')
+  })
+
+  it('affiche le nom du serveur émetteur, échappé', () => {
+    const payload = renderPublicMessage(view({}, [{}], '[clique](https://evil.example)'), emojis)
+    const embed = payload.embeds[0] as { description: string }
+    // Les crochets sont échappés : le nom s'affiche littéralement, pas comme un lien cliquable.
+    expect(embed.description).toContain('\\[clique\\](https://evil.example)')
+  })
+
+  it('un nom de serveur vide (serveur inscrit avant la migration) n\'ajoute ni ligne ni libellé orphelin', () => {
+    const withName = renderPublicMessage(view({}, [{}], 'Horde Raiders EU'), emojis)
+    const withoutName = renderPublicMessage(view({}, [{}], ''), emojis)
+    const embedWith = (withName.embeds[0] as { description: string }).description
+    const embedWithout = (withoutName.embeds[0] as { description: string }).description
+    expect(embedWith).toContain('Horde Raiders EU')
+    expect(embedWithout).not.toContain('Horde Raiders EU')
+    // Aucun libellé "Server" orphelin, ni ligne vide en trop par rapport au
+    // rendu sans nom de serveur — juste les lignes heure + contact usuelles.
+    expect(embedWithout).not.toMatch(/Server/i)
+    expect(embedWithout.split('\n')[0]).not.toBe('')
+  })
+
+  it('tronque un nom de serveur très long à 100 caractères', () => {
+    const longName = 'A'.repeat(200)
+    const payload = renderPublicMessage(view({}, [{}], longName), emojis)
+    const embed = payload.embeds[0] as { description: string }
+    const line = embed.description.split('\n').find((l) => l.includes('A'))!
+    // 100 'A' consécutifs, mais pas 101 : la troncature a bien eu lieu.
+    expect(line).toContain('A'.repeat(100))
+    expect(line).not.toContain('A'.repeat(101))
   })
 })
 

@@ -36,13 +36,16 @@ export const setLfgChannelCommand = {
       if (code) {
         await redeemInviteCode(deps.db, {
           code, discordGuildId: interaction.guildId!, lfgChannelId: channel.id,
-          recruiterRoleIds: [role.id], timezone,
+          recruiterRoleIds: [role.id], timezone, name: interaction.guild?.name,
         })
         await interaction.editReply(`This server joined the PugStone network. Listings will be posted in ${channel}.`)
       } else {
+        // Rejouer la commande est le seul chemin de rattrapage pour un serveur
+        // inscrit avant l'ajout de `Guild.name` (Tâche 18) : ce champ se met
+        // à jour au passage, sans mécanisme de synchronisation dédié.
         await updateGuildConfig(deps.db, {
           discordGuildId: interaction.guildId!, lfgChannelId: channel.id,
-          recruiterRoleIds: [role.id], timezone,
+          recruiterRoleIds: [role.id], timezone, name: interaction.guild?.name,
         })
         await interaction.editReply('Configuration updated.')
       }
