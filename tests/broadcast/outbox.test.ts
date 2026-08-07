@@ -128,9 +128,14 @@ describe('échecs', () => {
   })
 
   it('abandonne après MAX_ATTEMPTS tentatives', async () => {
-    await publishedEvent()
+    // Ligne PUBLIC isolée (pas `publishedEvent()`) : depuis la Tâche 19, une
+    // erreur générique (500) sur `sendMessage`/`sendDM` déclenche aussi une
+    // notification, elle-même émise via `sendDM`. `failAlways` échouerait
+    // donc également cette notification et polluerait la sortie de test de
+    // `logger.warn` — on cible précisément les appels dont ce test a besoin.
+    await publicOnlyMessage('origin', 'chan')
     const gateway = new FakeGateway()
-    gateway.failAlways(discordError(500))
+    gateway.failNextOn('sendMessage', ...Array(MAX_ATTEMPTS).fill(discordError(500)))
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       await runOutboxTick(deps(gateway))
       clock = new Date(clock.getTime() + 60 * 60 * 1000)
@@ -140,9 +145,13 @@ describe('échecs', () => {
   })
 
   it('marque le serveur NEEDS_ATTENTION sur permission manquante, sans réessayer', async () => {
-    await publishedEvent()
+    // Idem : ligne PUBLIC isolée plutôt que `failAlways`, pour que la
+    // notification déclenchée (fetchGuildOwnerId + sendDM) réussisse
+    // silencieusement au lieu de polluer la sortie de `logger.warn`.
+    await makeGuild(testDb, { discordGuildId: 'partner', lfgChannelId: 'partner-chan' })
+    await publicOnlyMessage('partner', 'partner-chan')
     const gateway = new FakeGateway()
-    gateway.failAlways(discordError(50013))
+    gateway.failNextOn('sendMessage', discordError(50013))
     await runOutboxTick(deps(gateway))
 
     const guild = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'partner' } })
@@ -264,6 +273,33 @@ describe('notifications d\'échec (Tâche 19)', () => {
     expect(row.disabled).toBe(true)
     const guild = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'partner' } })
     expect(guild.status).toBe('NEEDS_ATTENTION')
+    // Ne pas se contenter d'observer l'absence d'exception : une version du
+    // code sans aucune notification satisferait tout autant les assertions
+    // ci-dessus. On épingle donc la tentative elle-même — le propriétaire du
+    // serveur a bien été résolu — et son échec — aucun DM de notification
+    // n'a abouti, malgré les 2 files `sendDM` réellement consommées.
+    expect(gateway.guildOwnerFetches).toContain('partner')
+    expect(gateway.dms.filter((d) => d.userId === 'owner-partner' || d.userId === 'bot-owner')).toHaveLength(0)
+  })
+
+  it('un échec 50001 sur une ligne DASHBOARD ne dégrade pas le serveur émetteur', async () => {
+    // deliverDashboard relance TARGET_UNUSABLE dès l'échec du DM initial au
+    // Raid Leader, avant toute tentative sur le salon LFG d'origine : ce
+    // n'est jamais le serveur qui est en cause, seulement l'accessibilité
+    // d'un joueur précis (revue Tâche 19). Le serveur émetteur doit donc
+    // rester ACTIVE et son propriétaire ne doit rien recevoir.
+    await publishedEvent()
+    const gateway = new FakeGateway()
+    gateway.failNextOn('sendDM', discordError(50001))
+    await runOutboxTick(deps(gateway))
+
+    const origin = await testDb.guild.findUniqueOrThrow({ where: { discordGuildId: 'origin' } })
+    expect(origin.status).toBe('ACTIVE')
+    expect(gateway.dms.filter((d) => d.userId === 'owner-origin')).toHaveLength(0)
+    const row = await testDb.eventMessage.findFirstOrThrow({ where: { kind: 'DASHBOARD' } })
+    expect(row.disabled).toBe(true)
+    // L'owner du bot, lui, est bien informé que ce dashboard précis n'a pas pu être livré.
+    expect(gateway.dms.filter((d) => d.userId === 'bot-owner')).toHaveLength(1)
   })
 
   it('un échec de fetchGuildOwnerId est traité comme les autres : l\'owner du bot est tout de même prévenu', async () => {

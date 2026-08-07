@@ -95,23 +95,39 @@ export function listActiveGuilds(db: Db): Promise<Guild[]> {
 }
 
 /**
- * Écriture conditionnelle plutôt que lecture puis écriture : le prédicat
- * `status: { not: 'NEEDS_ATTENTION' }` fait partie du WHERE de l'UPDATE, donc
- * évalué et appliqué atomiquement par Postgres. Deux appels concurrents sur
- * le même `guildId` (Tâche 19 : deux lignes d'émission d'un même serveur en
- * échec dans le même tick) se sérialisent sur le verrou de ligne : le premier
- * commit la transition et renvoie `true`, le second relit alors un statut déjà
- * `NEEDS_ATTENTION` et renvoie `false` — sans jamais qu'une lecture séparée de
- * l'écriture laisse passer une fenêtre de course. Le booléen retourné indique
- * si *cet appel* a fait basculer l'état, ce qui permet à l'appelant de ne
- * notifier que sur transition, jamais sur chaque occurrence.
+ * Écriture conditionnelle plutôt que lecture puis écriture, avec deux
+ * exigences qui ne peuvent pas se satisfaire par un simple `updateMany` :
+ *  - le motif (`statusReason`) doit toujours être rafraîchi, y compris quand
+ *    le serveur est déjà `NEEDS_ATTENTION` (sans quoi `/network status`
+ *    afficherait indéfiniment la toute première cause, même si l'échec
+ *    courant en est une autre) ;
+ *  - la notification, elle, ne doit partir que sur *transition*, c'est-à-dire
+ *    seulement si le serveur était `ACTIVE` juste avant cet appel — jamais
+ *    depuis `SUSPENDED` (un serveur qui a retiré le bot ne doit pas recevoir
+ *    une alerte sur son propre retrait) ni depuis `NEEDS_ATTENTION` (anti-spam).
+ *
+ * Le CTE `prev` verrouille la ligne (`FOR UPDATE`) et capture son statut
+ * *avant* la mise à jour, dans la même instruction SQL que l'`UPDATE` qui
+ * suit : lecture et écriture sont donc atomiques, sans fenêtre entre les deux
+ * où un second appelant pourrait s'intercaler. Deux appels concurrents sur le
+ * même `guildId` se sérialisent sur le verrou du CTE : le premier lit
+ * `ACTIVE`, applique la transition, commit ; le second, débloqué ensuite,
+ * relit alors `NEEDS_ATTENTION` (déjà mis à jour par le premier) — seul le
+ * premier rend `true`. Le `WHERE prev.status <> 'SUSPENDED'` empêche
+ * quiconque de rétrograder un serveur suspendu.
  */
 export async function markGuildNeedsAttention(db: Db, guildId: string, reason: string): Promise<boolean> {
-  const result = await db.guild.updateMany({
-    where: { id: guildId, status: { not: 'NEEDS_ATTENTION' } },
-    data: { status: 'NEEDS_ATTENTION', statusReason: reason },
-  })
-  return result.count > 0
+  const rows = await db.$queryRaw<{ previousStatus: string }[]>`
+    WITH prev AS (
+      SELECT status FROM "Guild" WHERE id = ${guildId} FOR UPDATE
+    )
+    UPDATE "Guild" g
+    SET status = 'NEEDS_ATTENTION', "statusReason" = ${reason}
+    FROM prev
+    WHERE g.id = ${guildId} AND prev.status <> 'SUSPENDED'
+    RETURNING prev.status AS "previousStatus"
+  `
+  return rows[0]?.previousStatus === 'ACTIVE'
 }
 
 export async function suspendGuild(db: Db, discordGuildId: string): Promise<void> {

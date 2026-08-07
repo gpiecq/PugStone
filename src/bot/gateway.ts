@@ -52,17 +52,22 @@ export class DiscordJsGateway implements DiscordGateway {
 
   /**
    * Un serveur introuvable (bot expulsé) ou un propriétaire qui ne peut plus
-   * être résolu sont tous deux traduits en 10003, exactement comme
-   * `textChannel` : le worker d'émission (Tâche 9) n'a pas besoin de
-   * distinguer ces deux cas, seulement de savoir que la cible est inutilisable.
+   * être résolu sont tous deux normalisés en 10003, comme le fait `textChannel`
+   * pour un salon — mais contrairement à `textChannel`, aucun appelant ne
+   * branche aujourd'hui sur ce code : le worker d'émission (Tâche 19) avale
+   * systématiquement l'erreur de cette méthode (une notification qui échoue
+   * ne doit jamais faire échouer le worker). Le code sert donc surtout à
+   * l'observabilité, pas au routage — d'où l'intérêt de préserver la cause
+   * d'origine via `cause`, pour ne pas maquiller une limitation de débit ou
+   * une panne réseau en « serveur introuvable » dans les journaux.
    */
   async fetchGuildOwnerId(discordGuildId: string): Promise<string> {
     try {
       const guild = await this.client.guilds.fetch(discordGuildId)
       const owner = await guild.fetchOwner()
       return owner.id
-    } catch {
-      throw Object.assign(new Error('serveur ou propriétaire introuvable'), { code: 10003 })
+    } catch (error) {
+      throw Object.assign(new Error('serveur ou propriétaire introuvable'), { code: 10003, cause: error })
     }
   }
 }

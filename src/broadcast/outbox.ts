@@ -130,6 +130,31 @@ async function notifyGuildNeedsAttention(deps: OutboxDeps, guild: Guild, reason:
   }
 }
 
+/**
+ * Une ligne DASHBOARD qui échoue en `TARGET_UNUSABLE` ne dit *rien* sur le
+ * salon LFG du serveur émetteur : `deliverDashboard` ne relance ce type
+ * d'erreur que depuis l'échec du DM initial au Raid Leader (avant même toute
+ * tentative sur le salon d'origine, voir sa docstring) — c'est un joueur
+ * injoignable, pas un serveur cassé. Marquer le serveur NEEDS_ATTENTION ici
+ * serait un diagnostic faux envoyé à son propriétaire, et sortirait tout le
+ * réseau du serveur pour la faute d'un seul Raid Leader (revue Tâche 19).
+ * On se contente donc de prévenir l'owner du bot, jamais le propriétaire du
+ * serveur, et sans toucher au statut de ce dernier.
+ */
+async function notifyDashboardUndeliverable(deps: OutboxDeps, row: Pending, reason: string): Promise<void> {
+  try {
+    const event = await deps.db.event.findUnique({ where: { id: row.eventId }, select: { raidName: true, authorId: true } })
+    const label = event ? `"${event.raidName}" (Raid Leader <@${event.authorId}>)` : `event ${row.eventId}`
+    await deps.gateway.sendDM(deps.ownerId, {
+      content: `Dashboard delivery permanently failed for ${label} on guild ${row.guildId}: ${reason}`,
+      embeds: [],
+      components: [],
+    })
+  } catch (error) {
+    logger.warn({ err: error, guildId: row.guildId, eventMessageId: row.id }, 'notification d\'échec de livraison du dashboard impossible')
+  }
+}
+
 /** Même garantie que `notifyGuildNeedsAttention` : ne doit jamais faire échouer le worker. */
 async function notifyOutboxAbandoned(deps: OutboxDeps, row: Pending, reason: string): Promise<void> {
   try {
@@ -156,6 +181,12 @@ async function handleFailure(deps: OutboxDeps, row: Pending, error: unknown): Pr
   }
   if (kind === 'TARGET_UNUSABLE') {
     await deps.db.eventMessage.update({ where: { id: row.id }, data: { disabled: true, lastError: message } })
+    if (row.kind === 'DASHBOARD') {
+      // Cf. docstring de notifyDashboardUndeliverable : jamais le serveur
+      // émetteur pour une ligne DASHBOARD, seulement l'owner du bot.
+      await notifyDashboardUndeliverable(deps, row, message)
+      return
+    }
     // EventMessage.guildId porte le discordGuildId, alors que
     // markGuildNeedsAttention attend l'identifiant interne du Guild.
     const guild = await deps.db.guild.findUnique({ where: { discordGuildId: row.guildId } })

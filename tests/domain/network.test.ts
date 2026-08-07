@@ -107,7 +107,7 @@ describe('cibles de diffusion', () => {
 })
 
 describe('mise à l\'écart d\'un serveur (Tâche 19)', () => {
-  it('rend true sur la transition et false si déjà NEEDS_ATTENTION (écriture conditionnelle, anti-spam)', async () => {
+  it('rend true sur la transition, false ensuite, mais rafraîchit toujours le motif', async () => {
     const code = await createInviteCode(testDb, 'owner')
     const guild = await redeemInviteCode(testDb, config(code, 'gZ'))
 
@@ -118,8 +118,23 @@ describe('mise à l\'écart d\'un serveur (Tâche 19)', () => {
     expect(second).toBe(false)
     const updated = await testDb.guild.findUniqueOrThrow({ where: { id: guild.id } })
     expect(updated.status).toBe('NEEDS_ATTENTION')
-    // Le premier appel a posé la raison ; le second, sans effet, ne l'écrase pas.
-    expect(updated.statusReason).toBe('salon supprimé')
+    // Notifier seulement sur transition (le booléen) et rafraîchir le motif à
+    // chaque appel sont deux choses distinctes : /network status doit
+    // toujours refléter la cause la plus récente, même sans nouvelle alerte.
+    expect(updated.statusReason).toBe('toujours cassé')
+  })
+
+  it('ne rétrograde jamais un serveur SUSPENDED et ne touche pas son motif', async () => {
+    const code = await createInviteCode(testDb, 'owner')
+    const guild = await redeemInviteCode(testDb, config(code, 'gS'))
+    await suspendGuild(testDb, 'gS')
+
+    const changed = await markGuildNeedsAttention(testDb, guild.id, 'salon supprimé')
+
+    expect(changed).toBe(false)
+    const updated = await testDb.guild.findUniqueOrThrow({ where: { id: guild.id } })
+    expect(updated.status).toBe('SUSPENDED')
+    expect(updated.statusReason).toBe('bot retiré du serveur')
   })
 })
 
