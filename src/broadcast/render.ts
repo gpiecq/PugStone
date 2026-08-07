@@ -141,7 +141,7 @@ export function renderPublicMessage(view: EventView, emojis: EmojiMap): MessageP
         ...(lines.length > 0 ? lines : [NO_SLOTS_PLACEHOLDER]),
       ].join('\n'),
       color: 0x5865f2,
-      footer: { text: 'PugStone LFG network' },
+      footer: { text: 'PugStone LFM network' },
     }],
     components: [{
       type: 1,
